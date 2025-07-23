@@ -17,6 +17,7 @@ from core.config import Config
 from core.uploader import MemoryUploader
 from core.searcher import MemorySearcher
 from multimodal_model_selector import IntelligentModelSelector, MultimodalProcessor
+from dynamic_model_selector import DynamicModelSelector
 from modern_chat_interface import modern_smart_chat_interface
 
 # 导入认证系统和安全补丁
@@ -203,7 +204,11 @@ if 'config' not in st.session_state:
         st.session_state.config = Config()
         st.session_state.uploader = MemoryUploader(st.session_state.config)
         st.session_state.searcher = MemorySearcher(st.session_state.config)
-        st.session_state.model_selector = IntelligentModelSelector()
+        # 初始化动态模型选择器
+        st.session_state.model_selector = DynamicModelSelector(
+            api_base_url=API_BASE_URL,
+            api_key=os.getenv('OPENAI_API_KEY', '')
+        )
         st.session_state.multimodal_processor = MultimodalProcessor()
         st.session_state.initialized = True
         st.session_state.api_connected = MemoryAPI.test_connection()
@@ -634,11 +639,10 @@ def handle_multimodal_chat_message(user_input: str, image_info: Dict = None):
     # 获取用户偏好
     model_preferences = st.session_state.model_preferences
 
-    # 选择最优模型
+    # 动态选择最优模型
     model_selection = st.session_state.model_selector.select_optimal_model(
-        content=content_for_analysis,
-        has_image=has_image,
-        user_preferences=model_preferences
+        user_query=content_for_analysis,
+        has_image=has_image
     )
 
     # 显示模型选择信息
@@ -1228,9 +1232,8 @@ def add_sample_memory(user_content: str, assistant_content: str, uploaded_image=
         has_image = image_info is not None
 
         model_selection = st.session_state.model_selector.select_optimal_model(
-            content=content_for_analysis,
-            has_image=has_image,
-            user_preferences=st.session_state.model_preferences
+            user_query=content_for_analysis,
+            has_image=has_image
         )
 
         user_id = st.session_state.user_settings['user_id']
@@ -1557,9 +1560,8 @@ def perform_multimodal_search(query: str, search_image, search_type: str, limit:
         has_image = image_base64 is not None
 
         model_selection = st.session_state.model_selector.select_optimal_model(
-            content=content_for_analysis,
-            has_image=has_image,
-            user_preferences=st.session_state.model_preferences
+            user_query=content_for_analysis,
+            has_image=has_image
         )
 
         # 显示模型选择信息
@@ -1687,24 +1689,32 @@ def system_settings_interface(auth_system):
     st.markdown("配置系统参数、个人偏好和模型选择策略")
 
     # 模型选择设置
-    st.subheader("🤖 智能模型选择")
+    st.subheader("🤖 动态智能模型选择")
 
-    col1, col2 = st.columns(2)
+    # 显示当前可用模型
+    if hasattr(st.session_state, 'model_selector'):
+        available_models = st.session_state.model_selector.get_available_models()
 
-    with col1:
-        strategy = st.selectbox(
-            "模型选择策略",
-            ["auto_intelligent", "always_pro", "always_flash_25", "always_flash_20"],
-            index=["auto_intelligent", "always_pro", "always_flash_25", "always_flash_20"].index(
-                st.session_state.model_preferences.get('strategy', 'auto_intelligent')
-            ),
-            format_func=lambda x: {
-                "auto_intelligent": "🧠 自动智能选择",
-                "always_pro": "🚀 总是使用 Gemini 2.5 Pro",
-                "always_flash_25": "⚡ 总是使用 Gemini 2.5 Flash",
-                "always_flash_20": "💨 总是使用 Gemini 2.0 Flash"
-            }[x]
-        )
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**当前可用模型:**")
+            for model in available_models:
+                st.write(f"• {model}")
+
+            if st.button("🔄 刷新模型列表"):
+                st.session_state.model_selector.refresh_models()
+                st.rerun()
+
+        with col2:
+            st.markdown("**智能选择模式:**")
+            st.info("系统会自动：\n1. 用快速模型分析问题\n2. 推荐最适合的模型\n3. 用推荐模型执行任务")
+
+            # 显示快速决策模型
+            fast_model = getattr(st.session_state.model_selector, 'fast_model', '未知')
+            st.write(f"**决策模型:** {fast_model}")
+
+    strategy = "dynamic_ai_recommendation"  # 固定使用动态推荐
 
         show_model_info = st.checkbox(
             "显示模型选择信息",

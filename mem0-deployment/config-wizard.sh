@@ -137,21 +137,18 @@ configure_ai_service() {
     echo ""
     echo -e "${CYAN}选择AI服务模式：${NC}"
     echo "1) external - 使用外部Gemini Balance服务（推荐）"
-    echo "2) integrated - 集成部署Gemini Balance"
-    echo "3) openai - 使用OpenAI API"
-    
-    read -p "请选择 (1-3): " ai_choice
-    
+    echo "2) openai - 使用OpenAI API"
+    echo ""
+    echo -e "${YELLOW}注意：integrated模式需要手动部署Gemini Balance服务${NC}"
+
+    read -p "请选择 (1-2): " ai_choice
+
     case $ai_choice in
         1|"")
             DEFAULT_CONFIG["GEMINI_BALANCE_MODE"]="external"
             configure_external_ai
             ;;
         2)
-            DEFAULT_CONFIG["GEMINI_BALANCE_MODE"]="integrated"
-            configure_integrated_ai
-            ;;
-        3)
             DEFAULT_CONFIG["GEMINI_BALANCE_MODE"]="openai"
             configure_openai
             ;;
@@ -175,30 +172,29 @@ configure_external_ai() {
         "访问Gemini Balance服务的API令牌")
 }
 
-# 配置集成AI服务
-configure_integrated_ai() {
-    DEFAULT_CONFIG["GEMINI_BALANCE_PORT"]=$(get_input \
-        "Gemini Balance端口" \
-        "8000" \
-        "集成部署的Gemini Balance服务端口")
-    
-    DEFAULT_CONFIG["MYSQL_ROOT_PASSWORD"]=$(get_input \
-        "MySQL root密码" \
-        "123456" \
-        "Gemini Balance使用的MySQL数据库root密码")
-}
+# 注意：integrated模式已移除，因为需要手动部署Gemini Balance
+# 如需integrated模式，请先手动部署Gemini Balance，然后选择external模式
 
 # 配置OpenAI
 configure_openai() {
+    echo ""
+    echo -e "${YELLOW}配置OpenAI模式 - 作为Gemini Balance的备用方案${NC}"
+
     DEFAULT_CONFIG["OPENAI_API_KEY"]=$(get_input \
         "OpenAI API Key" \
         "your-openai-api-key-here" \
-        "您的OpenAI API密钥")
-    
+        "您的OpenAI API密钥，用于备用AI服务")
+
     DEFAULT_CONFIG["OPENAI_BASE_URL"]=$(get_input \
         "OpenAI Base URL" \
         "https://api.openai.com/v1" \
-        "OpenAI API基础URL，可使用代理服务")
+        "OpenAI API基础URL，支持代理服务或第三方兼容API")
+
+    echo ""
+    echo -e "${CYAN}OpenAI模式配置完成！${NC}"
+    echo "- 当Gemini Balance不可用时，系统将自动切换到OpenAI"
+    echo "- 支持的模型：gpt-4o, gpt-4o-mini, gpt-3.5-turbo等"
+    echo "- 支持自定义Base URL，可接入其他兼容OpenAI API的服务"
 }
 
 # 配置数据库

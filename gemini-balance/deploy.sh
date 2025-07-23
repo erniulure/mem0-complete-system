@@ -164,19 +164,10 @@ configure_environment() {
     # 配置数据库类型
     echo ""
     echo "--- 数据库配置 ---"
-    echo "选择数据库类型:"
-    echo "1) SQLite (简单，适合测试)"
-    echo "2) MySQL (推荐，适合生产)"
-    read -p "请选择 (1/2): " db_choice
-    
-    if [[ "$db_choice" == "1" ]]; then
-        sed -i "s/DATABASE_TYPE=.*/DATABASE_TYPE=sqlite/" .env
-        sed -i "s/#SQLITE_DATABASE=/SQLITE_DATABASE=/" .env
-        log_info "已配置SQLite数据库"
-    else
-        # 保持MySQL配置
-        log_info "已配置MySQL数据库"
-    fi
+    echo "本系统使用MySQL数据库（生产级配置）"
+    # 强制使用MySQL，因为docker-compose.yml只支持MySQL
+    sed -i "s/DATABASE_TYPE=.*/DATABASE_TYPE=mysql/" .env
+    log_info "已配置MySQL数据库"
     
     echo "=============================================="
     log_success "环境配置完成"

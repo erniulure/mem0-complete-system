@@ -1,4 +1,4 @@
-# Mem0 配置文件 - 生产环境
+# Mem0 配置文件 - OpenAI模式
 version: "v1.1"
 
 llm:
@@ -19,4 +19,4 @@ vector_store:
     collection_name: mem0_collection
     host: mem0-qdrant
     port: 6333
-    embedding_model_dims: 768
+    embedding_model_dims: 1536  # OpenAI embedding dimensions

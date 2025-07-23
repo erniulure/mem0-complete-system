@@ -151,9 +151,10 @@ cd mem0-deployment
 ### 🔧 主要配置项
 
 #### AI服务配置
-- **外部Gemini-Balance**: 使用独立部署的AI服务
-- **集成模式**: 与Mem0一起部署
+- **外部Gemini-Balance**: 使用独立部署的AI服务（推荐）
 - **OpenAI模式**: 直接使用OpenAI API
+
+> **注意**: 集成模式需要手动部署Gemini Balance服务，建议使用外部模式
 
 #### 网络配置
 - **端口设置**: 所有服务端口可自定义
