@@ -81,7 +81,12 @@ show_wizard_welcome() {
     echo "  🔐 安全设置"
     echo "  📊 性能和日志配置"
     echo ""
-    echo -e "${YELLOW}提示：直接按回车使用默认值，输入值覆盖默认设置${NC}"
+    echo -e "${GREEN}💡 使用提示：${NC}"
+    echo -e "${YELLOW}  🔥 一路回车 - 所有配置都有合理的默认值，直接回车即可完成配置${NC}"
+    echo -e "${YELLOW}  ✏️  自定义 - 看到默认值后，可以输入新值进行覆盖${NC}"
+    echo -e "${YELLOW}  📋 参考值 - 每个配置都会显示默认值供参考${NC}"
+    echo ""
+    echo -e "${CYAN}🚀 推荐：新手用户直接一路回车，使用默认配置即可正常运行！${NC}"
     echo ""
     read -p "按回车键开始配置..." -r
 }
@@ -92,16 +97,20 @@ get_input() {
     local default="$2"
     local description="$3"
     local value
-    
+
     echo ""
-    echo -e "${CYAN}$description${NC}"
-    echo -e "${YELLOW}默认值: $default${NC}"
-    read -p "$prompt: " value
-    
+    echo -e "${CYAN}📝 $description${NC}"
+    echo -e "${YELLOW}💡 默认值: ${BOLD}$default${NC}"
+    echo -e "${GREEN}💬 提示: 直接按回车使用默认值，或输入新值覆盖${NC}"
+    read -p "🔧 $prompt: " value
+
+    # 只返回纯文本值，不包含任何颜色代码
     if [[ -z "$value" ]]; then
-        echo "$default"
+        echo -e "${GREEN}✅ 使用默认值: $default${NC}"
+        printf "%s" "$default"
     else
-        echo "$value"
+        echo -e "${GREEN}✅ 设置为: $value${NC}"
+        printf "%s" "$value"
     fi
 }
 
@@ -315,6 +324,14 @@ EOF
 
 # 主函数
 main() {
+    # 检查是否为自动模式
+    if [[ "$1" == "--auto" ]]; then
+        echo "🤖 自动配置模式：使用默认配置"
+        generate_env_file
+        log_success "自动配置完成！"
+        return
+    fi
+
     show_wizard_welcome
     configure_network
     configure_ai_service
@@ -322,7 +339,7 @@ main() {
     configure_security
     configure_advanced
     generate_env_file
-    
+
     log_success "配置向导完成！"
     echo ""
     echo -e "${YELLOW}配置文件已生成，您可以随时使用 ./config-manager.sh 进行修改${NC}"

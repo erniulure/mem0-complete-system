@@ -37,6 +37,14 @@ show_welcome() {
     echo "  🌐 Mem0Client: Web用户界面和客户端"
     echo "  🤖 Gemini-Balance: AI服务代理和负载均衡"
     echo ""
+
+    # 检查是否为自动安装模式
+    if [[ "$1" == "--auto" ]]; then
+        echo "🤖 自动安装模式：将执行完整安装"
+        install_choice=1
+        return
+    fi
+
     echo "安装选项："
     echo "  1) 🚀 完整安装（推荐）- 安装所有组件"
     echo "  2) 🎯 仅安装Mem0系统 - 使用外部AI服务"
@@ -127,7 +135,11 @@ full_install() {
     log_info "安装Mem0核心系统..."
     cd mem0-deployment
     chmod +x install.sh
-    ./install.sh
+    if [[ "$1" == "--auto" ]]; then
+        ./install.sh --auto
+    else
+        ./install.sh
+    fi
     cd ..
     
     log_success "完整安装完成！"
@@ -139,7 +151,11 @@ mem0_only_install() {
     
     cd mem0-deployment
     chmod +x install.sh
-    ./install.sh
+    if [[ "$1" == "--auto" ]]; then
+        ./install.sh --auto
+    else
+        ./install.sh
+    fi
     cd ..
     
     log_success "Mem0系统安装完成！"
@@ -170,11 +186,68 @@ custom_install() {
         log_info "安装Mem0系统..."
         cd mem0-deployment
         chmod +x install.sh
-        ./install.sh
+        if [[ "$1" == "--auto" ]]; then
+            ./install.sh --auto
+        else
+            ./install.sh
+        fi
         cd ..
     fi
     
     log_success "自定义安装完成！"
+}
+
+# 验证安装状态
+verify_installation() {
+    log_step "验证安装状态..."
+
+    local all_services_ok=true
+    local service_status=""
+
+    # 等待服务启动
+    echo "⏳ 等待服务完全启动..."
+    sleep 10
+
+    # 检查Gemini Balance
+    if curl -s http://localhost:8000/v1/models > /dev/null 2>&1; then
+        service_status+="✅ Gemini Balance (端口8000): 运行正常\n"
+    else
+        service_status+="❌ Gemini Balance (端口8000): 服务异常\n"
+        all_services_ok=false
+    fi
+
+    # 检查Mem0 API
+    if curl -s http://localhost:8888/ > /dev/null 2>&1; then
+        service_status+="✅ Mem0 API (端口8888): 运行正常\n"
+    else
+        service_status+="❌ Mem0 API (端口8888): 服务异常\n"
+        all_services_ok=false
+    fi
+
+    # 检查Web界面
+    if curl -s http://localhost:8503/ > /dev/null 2>&1; then
+        service_status+="✅ Web界面 (端口8503): 运行正常\n"
+    else
+        service_status+="❌ Web界面 (端口8503): 服务异常\n"
+        all_services_ok=false
+    fi
+
+    # 检查Docker容器状态
+    local containers_status=$(docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(mem0|qdrant|gemini|postgres)")
+
+    echo -e "\n📊 服务状态检查结果："
+    echo -e "$service_status"
+
+    echo -e "\n🐳 Docker容器状态："
+    echo "$containers_status"
+
+    if $all_services_ok; then
+        log_success "所有服务运行正常！"
+        return 0
+    else
+        log_error "部分服务异常，请检查日志"
+        return 1
+    fi
 }
 
 # 显示完成信息
@@ -185,49 +258,76 @@ show_completion() {
     echo "                    🎉 Mem0完整系统安装完成！"
     echo "============================================================================="
     echo -e "${NC}"
-    echo "系统访问地址："
-    echo "  🌐 Mem0 Web界面: http://localhost:8503"
-    echo "  🔌 Mem0 API服务: http://localhost:8888"
+
+    # 验证安装
+    if verify_installation; then
+        echo ""
+        echo -e "${GREEN}🎯 安装验证: 所有服务运行正常！${NC}"
+    else
+        echo ""
+        echo -e "${RED}⚠️  安装验证: 部分服务异常，请查看上方状态检查${NC}"
+    fi
+
+    echo ""
+    echo "🌐 系统访问地址："
+    echo "  📱 Web界面: http://localhost:8503"
+    echo "  🔌 API服务: http://localhost:8888"
     echo "  📚 API文档: http://localhost:8888/docs"
     echo "  🤖 Gemini-Balance: http://localhost:8000"
     echo "  📊 Qdrant管理: http://localhost:6333/dashboard"
     echo ""
-    echo "管理命令："
-    echo "  📋 查看状态: cd mem0-deployment && ./scripts/quick-start.sh"
-    echo "  ⚙️  配置管理: cd mem0-deployment && ./scripts/config-manager.sh"
+    echo "🔧 管理命令："
+    echo "  📋 查看状态: cd mem0-deployment && docker-compose ps"
     echo "  📝 查看日志: cd mem0-deployment && docker-compose logs -f"
+    echo "  🔄 重启服务: cd mem0-deployment && docker-compose restart"
+    echo "  � 停止服务: cd mem0-deployment && docker-compose down"
     echo ""
-    echo "默认账户："
+    echo "🔐 默认账户："
     echo "  👤 用户名: admin"
-    echo "  🔑 密码: admin123"
+    echo "  🔑 密码: q1q2q3q4"
     echo ""
-    echo -e "${YELLOW}首次使用请访问Web界面进行初始化配置${NC}"
-    echo -e "${YELLOW}建议首次登录后立即修改默认密码${NC}"
+    echo "🚀 快速开始："
+    echo "  1. 打开浏览器访问: http://localhost:8503"
+    echo "  2. 使用默认账户登录"
+    echo "  3. 开始创建和管理您的智能记忆"
+    echo ""
+    echo "💡 功能特色："
+    echo "  🧠 动态智能模型选择 - 自动选择最适合的AI模型"
+    echo "  🔄 多模态支持 - 文本、图片、语音记忆"
+    echo "  🔍 智能搜索 - 语义搜索和向量检索"
+    echo "  📊 可视化管理 - 直观的记忆管理界面"
+    echo ""
+    echo -e "${YELLOW}⚠️  重要提醒：${NC}"
+    echo "  🔐 请及时修改默认密码"
+    echo "  🛡️  生产环境请配置HTTPS"
+    echo "  💾 定期备份重要数据"
+    echo ""
+    echo -e "${GREEN}🧠 开始使用 Mem0 智能记忆管理系统吧！${NC}"
 }
 
 # 主函数
 main() {
-    show_welcome
-    
+    show_welcome "$@"
+
     case $install_choice in
         1|"")
             check_requirements
-            full_install
+            full_install "$@"
             ;;
         2)
             check_requirements
-            mem0_only_install
+            mem0_only_install "$@"
             ;;
         3)
             check_requirements
-            custom_install
+            custom_install "$@"
             ;;
         *)
             log_error "无效选择，退出安装"
             exit 1
             ;;
     esac
-    
+
     show_completion
 }
 

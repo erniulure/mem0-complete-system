@@ -135,7 +135,11 @@ main() {
     
     # 运行配置向导
     log_step "启动配置向导..."
-    ./config-wizard.sh
+    if [[ "$1" == "--auto" ]]; then
+        ./config-wizard.sh --auto
+    else
+        ./config-wizard.sh
+    fi
     
     # 构建和启动服务
     log_step "构建和启动服务..."
