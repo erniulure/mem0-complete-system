@@ -1,0 +1,169 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Debugging Patterns and Common Issues
+
+This rule contains specific debugging patterns, error scenarios, and solutions for the Mem0 Client project.
+
+## 🔍 Search and API Issues
+
+### Date Filtering Debug Process
+
+When date filtering returns unexpected results, follow this debugging sequence:
+
+1. **Check Date Format**: Verify dates are converted to full datetime format
+   - **File**: [searcher.py](mdc:core/searcher.py) lines 80-86
+   - **Issue**: Mem0 API requires `YYYY-MM-DDTHH:MM:SS` not `YYYY-MM-DD`
+   - **Solution**: Always append time components
+   ```python
+   if 'T' not in start_date:
+       start_date = f"{start_date}T00:00:00"
+   if 'T' not in end_date:
+       end_date = f"{end_date}T23:59:59"
+   ```
+
+2. **Enable Debug Logging**: Set in [config.yaml](mdc:config.yaml)
+   ```yaml
+   debug:
+     enable_api_logging: true
+   ```
+
+3. **Monitor Debug Output**: Look for these log patterns in [searcher.py](mdc:core/searcher.py):
+   - `[DEBUG] Time range search parameters:`
+   - `[DEBUG] API Request parameters:`
+   - `[DEBUG] Raw response received:`
+
+### API Response Validation
+
+Common response issues and validation patterns:
+
+1. **Empty Results**: Check filter structure
+   - **Location**: [searcher.py](mdc:core/searcher.py) `search_by_query()` and `search_by_time_range()`
+   - **Pattern**: `{"AND": [{"user_id": "..."}, additional_filters]}`
+   - **Debug**: Verify user_id matches uploaded memories
+
+2. **Response Structure**: Validate API response format
+   - **Check**: Response type, length, dictionary keys
+   - **Location**: Debug logging after API calls
+   - **Pattern**: Look for unexpected response structures
+
+## 🔄 Upload and Parsing Issues
+
+### Role Normalization Problems
+
+The Mem0 API is strict about role values:
+
+1. **Valid Roles**: Only "user" and "assistant" accepted
+   - **File**: [parser.py](mdc:core/parser.py) `_normalize_role()` method
+   - **Issue**: Other roles ("system", "tool") cause 400 Bad Request
+   - **Solution**: Map all roles to "user" or "assistant"
+
+2. **Multilingual Support**: Handle Chinese and English role names
+   - **Patterns**: `['user', 'human', 'you', 'me', '用户', '我']` → "user"
+   - **Patterns**: `['assistant', 'ai', 'bot', 'gpt', 'claude', '助手']` → "assistant"
+
+### Batch Processing Debug
+
+When batch uploads fail:
+
+1. **Check Thresholds**: [config.py](mdc:core/config.py)
+   - `message_batch_threshold` - When to enable batching
+   - `message_batch_size` - Messages per batch
+   - `enable_message_batching` - Master switch
+
+2. **Monitor Batch Logic**: [uploader.py](mdc:core/uploader.py) `upload_text()` method
+   ```python
+   use_batching = (not disable_batching and 
+                  self.config.enable_message_batching and 
+                  len(messages) > self.config.message_batch_threshold)
+   ```
+
+3. **Retry Mechanism**: [uploader.py](mdc:core/uploader.py) `_add_with_retry()` method
+   - **Retries**: 3 attempts with exponential backoff (2s, 4s, 8s)
+   - **Retryable Errors**: 502, 503, 504, timeouts, connection issues
+
+## 🧪 Test Files for Debugging
+
+The project includes several test files for debugging specific scenarios:
+
+### Test Scripts
+- [test_limit_behavior.py](mdc:test_limit_behavior.py) - API limit testing
+- [simple_test.py](mdc:simple_test.py) - Basic functionality tests
+- [simple_json_test.py](mdc:simple_json_test.py) - JSON parsing tests
+- [long_content_test.py](mdc:long_content_test.py) - Large content handling
+- [infer_feature_test.py](mdc:infer_feature_test.py) - Infer mode testing
+
+### Configuration Testing
+- [config_check](mdc:cli.py) CLI command - Validate setup
+- Use `python cli.py config-check` to verify API key and configuration
+
+## 🚨 Common Error Patterns
+
+### API Authentication
+```bash
+❌ MEM0_API_KEY not found in environment variables or config
+```
+**Solution**: Set environment variable or add to config.yaml
+
+### JSON Parsing Errors
+```python
+ValueError: Invalid JSON format: ...
+```
+**Debug**: Check [parser.py](mdc:core/parser.py) `parse_json_chat()` method
+**Validation**: Ensure proper JSON structure with "messages" array
+
+### Batch Size Limits
+```python
+# API limits may require smaller batches
+```
+**Adjust**: `message_batch_size` in [config.yaml](mdc:config.yaml)
+**Monitor**: Batch processing logs in [uploader.py](mdc:core/uploader.py)
+
+### File Format Issues
+```python
+ValueError: No valid messages found in JSON
+```
+**Check**: Message content not empty after cleaning
+**Location**: [parser.py](mdc:core/parser.py) message validation
+
+## 🔧 Debug Configuration Recommendations
+
+### Essential Debug Settings
+```yaml
+# config.yaml
+debug:
+  enable_api_logging: true
+
+message_processing:
+  enable_batching: true
+  batch_threshold: 10
+  batch_size: 8  # Reduce if hitting API limits
+
+search:
+  default_limit: 10
+  max_limit: 100
+```
+
+### Environment Variables
+```bash
+# .env
+MEM0_API_KEY=your_key_here
+DEFAULT_USER_ID=debug_user
+```
+
+### CLI Debug Commands
+```bash
+# Configuration validation
+python cli.py config-check
+
+# Enable full content display
+python cli.py search "query" --show-full
+
+# Test with specific date ranges
+python cli.py search-time --start-date "2024-01-01" --end-date "2024-01-02"
+```
+
+This debugging guide helps identify and resolve common issues in the Mem0 Client project efficiently.
+

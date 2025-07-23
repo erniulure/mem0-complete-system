@@ -1,0 +1,265 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Mem0 API Reference and Data Structures
+
+This rule documents the Mem0 API interactions, data structures, and patterns used in the client.
+
+## 🔌 Mem0 API Integration
+
+### Client Initialization
+```python
+# Location: core/uploader.py and core/searcher.py
+from mem0 import MemoryClient
+
+# Setup in __init__ methods
+os.environ['MEM0_API_KEY'] = self.config.mem0_api_key
+self.client = MemoryClient()
+```
+
+### API Version Usage
+All API calls use **version="v2"** for consistency and latest features.
+
+## 📤 Upload API Patterns
+
+### Basic Upload Structure
+```python
+# Location: core/uploader.py _add_with_retry() method
+result = self.client.add(
+    messages,                    # List of message dictionaries
+    user_id="user_identifier",   # Required user identifier
+    version="v2",               # API version
+    # Optional parameters:
+    custom_instructions="...",   # AI processing guidance
+    includes="...",             # Content to include
+    excludes="...",             # Content to exclude  
+    infer=True,                 # Enable/disable inference
+    metadata={}                 # Additional metadata
+)
+```
+
+### Message Format
+```python
+# Standard message structure
+messages = [
+    {
+        "role": "user",          # "user" or "assistant" only
+        "content": "message text"  # Actual message content
+    }
+]
+```
+
+### Advanced Upload Parameters
+
+**Custom Instructions** - Guide AI processing:
+```python
+custom_instructions = "请专注于提取技术相关的信息，忽略日常闲聊内容"
+```
+
+**Includes/Excludes** - Content filtering:
+```python
+includes = "technical knowledge, work experience, project info"
+excludes = "personal information, sensitive data, privacy content"
+```
+
+**Infer Mode** - Control processing behavior:
+- `infer=True` - AI extracts and infers memories (default)
+- `infer=False` - Store raw message content
+
+## 🔍 Search API Patterns
+
+### Semantic Search
+```python
+# Location: core/searcher.py search_by_query() method
+results = self.client.search(
+    query="search text",
+    version="v2",
+    filters=filter_structure,
+    top_k=limit
+)
+```
+
+### Get All Memories
+```python
+# Location: core/searcher.py search_by_time_range() method
+results = self.client.get_all(
+    version="v2",
+    filters=filter_structure,
+    limit=limit
+)
+```
+
+## 🏗️ Filter Structures
+
+### Basic User Filter
+```python
+filter_structure = {
+    "AND": [
+        {"user_id": "user_identifier"}
+    ]
+}
+```
+
+### Time Range Filter
+```python
+filter_structure = {
+    "AND": [
+        {"user_id": "user_identifier"},
+        {
+            "created_at": {
+                "gte": "2024-01-01T00:00:00",  # Greater than or equal
+                "lte": "2024-01-01T23:59:59"   # Less than or equal
+            }
+        }
+    ]
+}
+```
+
+### Complex Filter Example
+```python
+filter_structure = {
+    "AND": [
+        {"user_id": "user_identifier"},
+        {"created_at": {"gte": start_datetime, "lte": end_datetime}},
+        # Additional filters can be added
+    ]
+}
+```
+
+## 📊 Response Structures
+
+### Upload Response
+```python
+{
+    "status": "success",           # Upload status
+    "message": "...",             # Status message
+    "memories_created": 5,        # Number of memories created
+    "batch_id": "...",           # Batch identifier (if applicable)
+    # Additional response fields
+}
+```
+
+### Search Response
+```python
+[
+    {
+        "id": "memory_id",         # Unique memory identifier
+        "memory": "extracted text", # Processed memory content
+        "score": 0.95,            # Relevance score (0-1)
+        "created_at": "2024-01-01T12:00:00Z",  # Creation timestamp
+        "updated_at": "2024-01-01T12:00:00Z",  # Update timestamp
+        "user_id": "user_identifier",          # User identifier
+        "metadata": {             # Additional metadata
+            "source": "file_upload",
+            "category": "work"
+        }
+    }
+    # More results...
+]
+```
+
+## ⚙️ Configuration Mapping
+
+### Config to API Parameter Mapping
+
+| Config Property | API Parameter | Default | Description |
+|----------------|---------------|---------|-------------|
+| `default_user_id` | `user_id` | "default_user" | User identifier |
+| `search_default_limit` | `top_k`/`limit` | 10 | Search result limit |
+| `message_batch_size` | N/A | 8 | Messages per batch |
+| `debug_logging` | N/A | true | Enable API logging |
+
+### File Processing Config
+```yaml
+# config.yaml structure used in core/config.py
+file_processing:
+  supported_formats: [".md", ".txt", ".markdown"]
+  max_file_size_mb: 10
+
+search:
+  default_limit: 10
+  max_limit: 100
+
+message_processing:
+  enable_batching: true
+  batch_threshold: 10
+  batch_size: 8
+```
+
+## 🔄 Error Handling Patterns
+
+### Retryable Errors (core/uploader.py)
+```python
+retryable_patterns = [
+    '502 bad gateway',
+    '503 service unavailable', 
+    '504 gateway timeout',
+    'timeout',
+    'connection',
+    'rate limit',
+    'server error'
+]
+```
+
+### Retry Configuration
+```python
+@retry(
+    stop=stop_after_attempt(3),                    # Max 3 attempts
+    wait=wait_exponential(multiplier=1, min=2, max=10),  # 2s, 4s, 8s backoff
+    retry=retry_if_exception_type((Exception,)),
+    reraise=True
+)
+```
+
+## 📝 Metadata Patterns
+
+### File Upload Metadata (core/uploader.py)
+```python
+metadata = {
+    "file_name": file_path.name,
+    "file_type": file_path.suffix,
+    "file_size": file_path.stat().st_size,
+    "upload_time": datetime.now().isoformat(),
+    "user_id": user_id,
+    "extract_mode": extract_mode,
+    # Optional conversation metadata for JSON chats
+    "created": created_timestamp,
+    "updated": updated_timestamp
+}
+```
+
+### Search Result Metadata
+```python
+# Automatically included in search responses
+{
+    "source_tag": "meeting",      # User-defined source
+    "category_tag": "work",       # User-defined category
+    "upload_time": "2024-01-01T12:00:00",
+    "file_name": "chat_log.md"
+}
+```
+
+## 🎯 Best Practices
+
+### API Call Optimization
+1. **Use Batching**: For >10 messages, enable batch processing
+2. **Proper Filtering**: Always include user_id in filters
+3. **Date Formatting**: Use full datetime format for time filters
+4. **Error Handling**: Implement retry logic for network issues
+
+### Data Structure Guidelines
+1. **Role Validation**: Only use "user" and "assistant" roles
+2. **Content Cleaning**: Remove empty or whitespace-only messages
+3. **Metadata Limits**: Keep metadata concise to avoid API limits
+4. **Unicode Handling**: Ensure proper UTF-8 encoding
+
+### Debug and Monitoring
+1. **Enable Logging**: Use `debug.enable_api_logging: true`
+2. **Monitor Responses**: Check response structure and content
+3. **Validate Filters**: Ensure filter syntax matches API expectations
+4. **Test Incrementally**: Start with small datasets before batch operations
+
+This API reference provides the foundation for understanding and extending the Mem0 Client's API interactions.
+

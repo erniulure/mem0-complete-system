@@ -1,0 +1,38 @@
+[Unit]
+Description=Mem0 记忆管理系统
+Documentation=https://github.com/mem0ai/mem0
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+User=root
+Group=root
+WorkingDirectory=/opt/mem0Client
+ExecStart=/opt/mem0Client/scripts/start_services.sh
+ExecStop=/opt/mem0Client/scripts/stop_services.sh
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/opt/mem0Client/pids/streamlit.pid
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mem0
+
+# 环境变量
+Environment=PYTHONPATH=/opt/mem0Client
+Environment=PATH=/opt/mem0Client/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# 安全设置
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/mem0Client
+ReadWritePaths=/opt/backups
+
+# 资源限制
+LimitNOFILE=65536
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

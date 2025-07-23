@@ -1,0 +1,147 @@
+version: '3.8'
+
+services:
+  # PostgreSQL 数据库
+  mem0-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mem0-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-mem0}
+      - POSTGRES_USER=${POSTGRES_USER:-mem0}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mem0_secure_password_2024}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+    networks:
+      - shared-network
+      - mem0-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mem0} -d ${POSTGRES_DB:-mem0}"]
+      interval: ${HEALTH_CHECK_INTERVAL:-30s}
+      timeout: ${HEALTH_CHECK_TIMEOUT:-10s}
+      retries: ${HEALTH_CHECK_RETRIES:-5}
+      start_period: 30s
+
+  # Qdrant 向量数据库
+  mem0-qdrant:
+    image: qdrant/qdrant:latest
+    container_name: mem0-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - mem0-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333 || exit 1"]
+      interval: ${HEALTH_CHECK_INTERVAL:-30s}
+      timeout: ${HEALTH_CHECK_TIMEOUT:-10s}
+      retries: ${HEALTH_CHECK_RETRIES:-5}
+      start_period: 30s
+
+  # Mem0 API 服务
+  mem0-api:
+    build:
+      context: ./mem0/server
+      dockerfile: Dockerfile
+    container_name: mem0-api
+    restart: unless-stopped
+    ports:
+      - "${MEM0_API_PORT:-8888}:8000"
+    volumes:
+      - ./configs:/app/configs
+      - ${DATA_PATH:-./data}:/app/data
+      - ${LOGS_PATH:-./logs}:/app/logs
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - POSTGRES_HOST=${POSTGRES_HOST:-mem0-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-mem0}
+      - POSTGRES_USER=${POSTGRES_USER:-mem0}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mem0_secure_password_2024}
+    depends_on:
+      - mem0-postgres
+      - mem0-qdrant
+    networks:
+      - mem0-network
+
+  # Web界面服务
+  mem0-webui:
+    build:
+      context: ../mem0Client
+      dockerfile: Dockerfile
+    container_name: mem0-webui
+    restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-8503}:8503"
+    volumes:
+      - ${DATA_PATH:-./data}:/app/data
+      - ${LOGS_PATH:-./logs}:/app/logs
+    environment:
+      # 基础配置
+      - MEM0_API_URL=http://mem0-api:8000
+      - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-standalone}
+
+      # PostgreSQL数据库配置
+      - POSTGRES_HOST=${POSTGRES_HOST:-mem0-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-mem0}
+      - POSTGRES_USER=${POSTGRES_USER:-mem0}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mem0_secure_password_2024}
+
+      # AI服务配置 (支持内置或外部)
+      - GEMINI_BALANCE_MODE=${GEMINI_BALANCE_MODE:-external}
+      - EXTERNAL_GEMINI_BALANCE_URL=${EXTERNAL_GEMINI_BALANCE_URL:-http://localhost:8000/v1}
+      - EXTERNAL_GEMINI_BALANCE_TOKEN=${EXTERNAL_GEMINI_BALANCE_TOKEN:-q1q2q3q4}
+      - INTEGRATED_GEMINI_BALANCE_URL=http://gemini-balance-integrated:8000/v1
+      - INTEGRATED_GEMINI_BALANCE_TOKEN=q1q2q3q4
+
+      # 备用OpenAI配置
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+
+      # 安全配置
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-your-secret-key-change-this}
+      - DEFAULT_ADMIN_USERNAME=${DEFAULT_ADMIN_USERNAME:-admin}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-admin123}
+
+      # 日志配置
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - mem0-api
+      - mem0-postgres
+    networks:
+      - mem0-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8503 || exit 1"]
+      interval: ${HEALTH_CHECK_INTERVAL:-30s}
+      timeout: ${HEALTH_CHECK_TIMEOUT:-10s}
+      retries: ${HEALTH_CHECK_RETRIES:-3}
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  mem0_data:
+
+networks:
+  # 创建一个共享网络，兼容所有服务
+  shared-network:
+    name: mem0-shared-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+  # 保持兼容性，连接到现有网络
+  mem0-network:
+    driver: bridge
+
+  # 外部网络引用（如果存在）
+  gemini-balance_default:
+    external: true
+    # 如果网络不存在，会自动忽略

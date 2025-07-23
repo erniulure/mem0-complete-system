@@ -1,0 +1,3 @@
+include README.md
+recursive-include streamlit_chat_prompt/frontend/build *
+recursive-include streamlit_chat_prompt/frontend/build/static *
