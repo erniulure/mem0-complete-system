@@ -102,43 +102,26 @@ class DynamicModelSelector:
         logging.info(f"选择快速决策模型: {self.fast_model}")
     
     def _ask_fast_model_for_recommendation(self, user_query: str, has_image: bool = False) -> Dict:
-        """使用快速模型分析问题并推荐最适合的模型"""
-        
-        # 构建模型列表字符串
-        model_list = "\n".join([f"- {model['id']}" for model in self.available_models])
-        
-        # 构建决策提示
+        """使用基础模型简单判断用哪个模型更合适"""
+
+        # 简化的决策提示 - 直接问AI选择
         decision_prompt = f"""
-你是一个AI模型选择专家。请分析用户的问题，从以下可用模型中推荐最适合的模型：
-
-可用模型：
-{model_list}
-
 用户问题："{user_query}"
 是否包含图片：{"是" if has_image else "否"}
 
-模型选择优先级指南：
-1. **主流首选**: gemini-2.5-flash (平衡), gemini-2.5-pro (高质量)
-2. **快速选择**: gemini-2.0-flash (速度优先)
-3. **备用选择**: gemini-1.5系列
+请判断这个问题用gemini-2.5-flash还是gemini-2.5-pro回答更好？
 
-推荐规则：
-- 简单对话 → gemini-2.5-flash
-- 复杂推理/技术问题 → gemini-2.5-pro
-- 图片分析 → gemini-2.5-pro 或 gemini-2.5-flash
-- 创意任务 → gemini-2.5-flash 或 gemini-2.5-pro
-- 速度要求高 → gemini-2.0-flash
+选择标准：
+- gemini-2.5-flash：适合日常对话、简单问题、快速回复
+- gemini-2.5-pro：适合复杂分析、技术问题、深度推理、代码相关
 
-请严格按照以下JSON格式回答，不要添加任何其他文字：
+请只回答模型名称，格式如下：
 {{
-    "recommended_model": "推荐的模型ID",
-    "reasoning": "推荐理由",
-    "task_type": "任务类型",
-    "complexity_level": "复杂度等级(1-10)",
-    "alternative_model": "备选模型ID"
+    "recommended_model": "gemini-2.5-flash" 或 "gemini-2.5-pro",
+    "reasoning": "选择理由"
 }}
 
-重要：只返回JSON，不要有任何解释或其他内容！
+只返回JSON，不要其他内容！
 """
         
         try:
@@ -204,100 +187,63 @@ class DynamicModelSelector:
         return self._fallback_recommendation("", False)
     
     def _fallback_recommendation(self, user_query: str, has_image: bool) -> Dict:
-        """备用推荐逻辑"""
-        if not self.available_models:
-            return {
-                "recommended_model": "gpt-4o-mini",
-                "reasoning": "默认推荐",
-                "task_type": "未知",
-                "complexity_level": "5"
-            }
-        
-        # 简单的规则推荐
+        """简化的备用推荐逻辑"""
+        # 如果有图片，优先使用pro模型
         if has_image:
-            # 优先选择支持多模态的主流模型
-            multimodal_models = [
-                "gemini-2.5-pro",           # 最佳多模态质量
-                "gemini-2.5-flash",         # 主流多模态平衡
-                "gemini-2.0-flash-exp",     # 实验性多模态
-                "gemini-1.5-pro"            # 备用多模态
-            ]
-            for model in multimodal_models:
-                if any(m['id'] == model for m in self.available_models):
-                    return {
-                        "recommended_model": model,
-                        "reasoning": "图片任务需要多模态能力，选择主流模型确保最佳效果",
-                        "task_type": "图片分析",
-                        "complexity_level": "7"
-                    }
-        
-        # 检查是否是复杂任务
-        complex_keywords = ["分析", "解释", "代码", "算法", "架构", "设计", "优化", "调试"]
-        if any(keyword in user_query for keyword in complex_keywords):
-            # 选择高质量主流模型
-            quality_models = [
-                "gemini-2.5-pro",           # 主流最佳质量
-                "gemini-2.0-pro-exp",       # 实验性高质量
-                "gemini-1.5-pro"            # 备用高质量
-            ]
-            for model in quality_models:
-                if any(m['id'] == model for m in self.available_models):
-                    return {
-                        "recommended_model": model,
-                        "reasoning": "复杂任务需要高质量模型，选择主流2.5-pro确保最佳推理能力",
-                        "task_type": "复杂推理",
-                        "complexity_level": "8"
-                    }
-        
-        # 默认选择主流平衡模型
-        balanced_models = [
-            "gemini-2.5-flash",         # 主流首选：最佳平衡
-            "gemini-2.0-flash",         # 次选：速度优先
-            "gemini-1.5-flash"          # 备用：兼容性好
-        ]
-        for model in balanced_models:
-            if any(m['id'] == model for m in self.available_models):
-                return {
-                    "recommended_model": model,
-                    "reasoning": "选择主流2.5-flash模型，平衡质量和速度，适合日常对话",
-                    "task_type": "一般对话",
-                    "complexity_level": "5"
-                }
-        
-        # 最后选择第一个可用模型
+            return {
+                "recommended_model": "gemini-2.5-pro",
+                "reasoning": "图片任务使用pro模型确保最佳效果"
+            }
+
+        # 默认使用flash模型
         return {
-            "recommended_model": self.available_models[0]['id'],
-            "reasoning": "使用第一个可用模型",
-            "task_type": "未知",
-            "complexity_level": "5"
+            "recommended_model": "gemini-2.5-flash",
+            "reasoning": "默认使用flash模型平衡质量和速度"
         }
     
     def select_optimal_model(self, user_query: str, has_image: bool = False) -> Dict:
         """选择最优模型的主要方法"""
-        
-        # 1. 使用快速模型获取推荐
-        recommendation = self._ask_fast_model_for_recommendation(user_query, has_image)
-        
-        # 2. 验证推荐的模型是否可用
-        recommended_model = recommendation.get('recommended_model')
-        if not any(model['id'] == recommended_model for model in self.available_models):
-            # 如果推荐的模型不可用，使用备用推荐
+
+        logging.info(f"开始模型选择 - 问题: '{user_query[:50]}...', 包含图片: {has_image}")
+
+        try:
+            # 1. 使用快速模型获取推荐
+            recommendation = self._ask_fast_model_for_recommendation(user_query, has_image)
+            logging.info(f"AI推荐结果: {recommendation}")
+
+            # 2. 验证推荐的模型是否可用
+            recommended_model = recommendation.get('recommended_model')
+            if not any(model['id'] == recommended_model for model in self.available_models):
+                logging.warning(f"推荐的模型 {recommended_model} 不可用，使用备用逻辑")
+                recommendation = self._fallback_recommendation(user_query, has_image)
+                recommendation["selection_method"] = "fallback_logic"
+            else:
+                recommendation["selection_method"] = "ai_recommendation"
+
+            # 3. 添加额外信息
+            recommendation.update({
+                "available_models": [model['id'] for model in self.available_models],
+                "fast_model_used": self.fast_model
+            })
+
+            # 确保字段名一致性
+            if "recommended_model" in recommendation and "selected_model" not in recommendation:
+                recommendation["selected_model"] = recommendation["recommended_model"]
+            elif "selected_model" in recommendation and "recommended_model" not in recommendation:
+                recommendation["recommended_model"] = recommendation["selected_model"]
+
+            logging.info(f"最终选择模型: {recommendation.get('selected_model')}, 理由: {recommendation.get('reasoning')}")
+            return recommendation
+
+        except Exception as e:
+            logging.error(f"模型选择失败: {e}, 使用备用逻辑")
             recommendation = self._fallback_recommendation(user_query, has_image)
-        
-        # 3. 添加额外信息和字段名标准化
-        recommendation.update({
-            "available_models": [model['id'] for model in self.available_models],
-            "fast_model_used": self.fast_model,
-            "selection_method": "dynamic_ai_recommendation"
-        })
-
-        # 确保字段名一致性 - 同时提供recommended_model和selected_model
-        if "recommended_model" in recommendation and "selected_model" not in recommendation:
-            recommendation["selected_model"] = recommendation["recommended_model"]
-        elif "selected_model" in recommendation and "recommended_model" not in recommendation:
-            recommendation["recommended_model"] = recommendation["selected_model"]
-
-        return recommendation
+            recommendation.update({
+                "selection_method": "error_fallback",
+                "error": str(e),
+                "selected_model": recommendation["recommended_model"]
+            })
+            return recommendation
     
     def get_available_models(self) -> List[str]:
         """获取可用模型列表"""

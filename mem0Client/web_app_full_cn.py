@@ -1468,38 +1468,59 @@ def data_analysis_interface():
         # 基本统计信息
         total_memories = len(memories_data)
 
-        # 计算时间相关统计
-        now = datetime.now()
+        # 计算时间相关统计 - 修复时区问题
+        from datetime import timezone
+        now = datetime.now(timezone.utc)  # 使用UTC时区
         week_ago = now - timedelta(days=7)
+        two_weeks_ago = now - timedelta(days=14)
         day_ago = now - timedelta(days=1)
 
-        recent_memories = []
-        today_memories = []
+        this_week_memories = []  # 本周新增
+        last_week_memories = []  # 上周新增
+        today_memories = []      # 今日新增
 
         for memory in memories_data:
             # 假设记忆有创建时间字段
             if 'created_at' in memory:
                 try:
-                    created_time = datetime.fromisoformat(memory['created_at'].replace('Z', '+00:00'))
-                    if created_time >= week_ago:
-                        recent_memories.append(memory)
-                    if created_time >= day_ago:
+                    # 处理时区问题
+                    created_at_str = memory['created_at']
+                    if created_at_str.endswith('Z'):
+                        created_at_str = created_at_str.replace('Z', '+00:00')
+
+                    created_time = datetime.fromisoformat(created_at_str)
+
+                    # 如果解析的时间没有时区信息，假设为UTC
+                    if created_time.tzinfo is None:
+                        created_time = created_time.replace(tzinfo=timezone.utc)
+
+                    # 转换为UTC进行比较
+                    created_time_utc = created_time.astimezone(timezone.utc)
+
+                    if created_time_utc >= week_ago:
+                        this_week_memories.append(memory)
+                    elif created_time_utc >= two_weeks_ago:
+                        last_week_memories.append(memory)
+                    if created_time_utc >= day_ago:
                         today_memories.append(memory)
-                except:
-                    pass
+
+                except Exception as e:
+                    pass  # 忽略时间解析错误的记忆
+
+        # 计算增量
+        week_delta = len(this_week_memories) - len(last_week_memories)
+        today_delta = len(today_memories)  # 今日新增就是增量
 
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            st.metric("总记忆数", total_memories, len(recent_memories))
+            st.metric("总记忆数", total_memories, f"+{len(today_memories)}")
 
         with col2:
-            st.metric("本周新增", len(recent_memories), len(today_memories))
+            st.metric("本周新增", len(this_week_memories), f"{week_delta:+d}" if week_delta != 0 else "0")
 
         with col3:
-            # 搜索次数从会话状态获取
-            search_count = st.session_state.get('search_count', 0)
-            st.metric("搜索次数", search_count, "0")
+            st.metric("今日新增", len(today_memories), f"+{len(today_memories)}")
 
         with col4:
             # 活跃天数计算

@@ -48,22 +48,33 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
             has_image=has_image
         )
 
-        # 🧠 智能记忆分析：判断是否需要检索历史记忆
-        memory_analysis = memory_manager.analyze_memory_need(user_text)
+        # 🧠 简化记忆检索：默认总是检索记忆（除非是明显的垃圾内容）
+        should_skip_memory = (
+            len(user_text.strip()) < 2 or  # 太短
+            user_text.strip() in ['hi', 'hello', '你好', 'ok', 'yes', 'no'] or  # 简单问候
+            user_text.strip().startswith('/')  # 命令
+        )
 
-        # 显示记忆分析状态（可选）
-        if memory_analysis['needs_memory']:
-            with st.spinner(f"🧠 正在回忆相关信息... (置信度: {memory_analysis['confidence']:.2f})"):
+        if not should_skip_memory:
+            with st.spinner("🧠 正在回忆相关信息..."):
                 # 🔍 搜索相关记忆（使用同步版本）
                 relevant_memories = memory_manager.search_relevant_memories_sync(user_text, limit=5)
 
                 # 📝 构建增强的上下文
                 enhanced_user_input = memory_manager.build_context_with_memories(
-                    user_text, relevant_memories, memory_analysis
+                    user_text, relevant_memories, {'needs_memory': True, 'confidence': 1.0}
                 )
         else:
             enhanced_user_input = user_text
             relevant_memories = []
+
+        # 简化的记忆分析结果
+        memory_analysis = {
+            'needs_memory': not should_skip_memory,
+            'confidence': 1.0 if not should_skip_memory else 0.0,
+            'trigger_type': 'default' if not should_skip_memory else 'skip',
+            'keywords': []
+        }
 
         # 添加用户消息到聊天历史
         user_message = {
