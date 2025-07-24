@@ -115,17 +115,25 @@ configure_environment() {
     echo "🔑 Gemini Balance 配置向导"
     echo "=============================================="
     echo ""
-    
+
     # 复制环境变量模板
     if [[ ! -f ".env" ]]; then
         cp .env.example .env
         log_info "已创建.env配置文件"
     fi
-    
-    # 配置Gemini API密钥
-    echo "--- Gemini API密钥配置 ---"
-    echo "请输入你的Gemini API密钥（多个密钥用逗号分隔）:"
-    read -p "Gemini API Keys: " gemini_keys
+
+    # 检查是否为自动模式
+    if [[ "$1" == "--auto" ]]; then
+        echo "🤖 自动配置模式：使用默认配置"
+        # 使用默认的API密钥（从.env.example中读取）
+        gemini_keys="AIzaSyAs5vgmd12k9PF-YU0gvGY-RLjghNE3GrU,AIzaSyATXrWRFU12Qvn_eojERncPSjH0uyEH0oY,AIzaSyC6q7WEX67hRyGUKgwjmFDhU6Pw1oMSuz0,AIzaSyAdMxw-wmI5tI-Op6GcRse4j1nyzReaghA,AIzaSyAfo1AB90HgKSiV4-a_BwTK26-6BhTg5FE,AIzaSyAov2ZscN1AAD3z0uJ-vIgdO6ZsypPudTU,AIzaSyDmsx8yjQHUKgUOw05WGyQkQTmXgBYUWWA,AIzaSyBkE06pIm18ZbNJQVzBuXCx5pf5h2MLC3w,AIzaSyBPSalsP7fkIPme1N_ROCs7LGky4b0bEGw,AIzaSyDCoBo5cWzJvw_WXwBnz0Foq9mr76nXen8"
+        access_token="q1q2q3q4"
+    else
+        # 配置Gemini API密钥
+        echo "--- Gemini API密钥配置 ---"
+        echo "请输入你的Gemini API密钥（多个密钥用逗号分隔）:"
+        read -p "Gemini API Keys: " gemini_keys
+    fi
     
     if [[ -n "$gemini_keys" ]]; then
         # 转换为JSON数组格式
@@ -137,9 +145,11 @@ configure_environment() {
                 json_keys+=","
             fi
             json_keys+="\"$key\""
-            
-            # 测试每个密钥
-            if test_gemini_key "$key"; then
+
+            # 测试每个密钥（自动模式跳过测试）
+            if [[ "$1" == "--auto" ]]; then
+                log_info "自动模式：跳过密钥 ${key:0:10}... 的验证"
+            elif test_gemini_key "$key"; then
                 log_success "密钥 ${key:0:10}... 验证通过"
             else
                 log_warning "密钥 ${key:0:10}... 验证失败"
@@ -153,10 +163,12 @@ configure_environment() {
     fi
     
     # 配置访问令牌
-    echo ""
-    echo "--- 访问令牌配置 ---"
-    read -p "请输入访问令牌 (默认: sk-123456): " access_token
-    access_token=${access_token:-sk-123456}
+    if [[ "$1" != "--auto" ]]; then
+        echo ""
+        echo "--- 访问令牌配置 ---"
+        read -p "请输入访问令牌 (默认: q1q2q3q4): " access_token
+        access_token=${access_token:-q1q2q3q4}
+    fi
     
     sed -i "s/ALLOWED_TOKENS=.*/ALLOWED_TOKENS=[\"$access_token\"]/" .env
     sed -i "s/AUTH_TOKEN=.*/AUTH_TOKEN=$access_token/" .env
@@ -339,12 +351,19 @@ show_menu() {
     echo "=============================================="
     echo "🧠 Gemini Balance 部署脚本"
     echo "=============================================="
-    echo "请选择部署方式:"
-    echo "1) Docker Compose部署 (推荐)"
-    echo "2) Python本地部署"
-    echo "3) 退出"
-    echo ""
-    read -p "请选择 (1-3): " choice
+
+    # 检查是否为自动模式
+    if [[ "$1" == "--auto" ]]; then
+        echo "🤖 自动部署模式：使用Docker Compose部署"
+        choice=1
+    else
+        echo "请选择部署方式:"
+        echo "1) Docker Compose部署 (推荐)"
+        echo "2) Python本地部署"
+        echo "3) 退出"
+        echo ""
+        read -p "请选择 (1-3): " choice
+    fi
     
     case $choice in
         1)
@@ -352,14 +371,22 @@ show_menu() {
             check_root
             detect_os
             install_docker
-            configure_environment
+            if [[ "$1" == "--auto" ]]; then
+                configure_environment --auto
+            else
+                configure_environment
+            fi
             deploy_with_docker
             setup_firewall
             show_completion_info
             ;;
         2)
             DEPLOY_METHOD="python"
-            configure_environment
+            if [[ "$1" == "--auto" ]]; then
+                configure_environment --auto
+            else
+                configure_environment
+            fi
             deploy_with_python
             show_completion_info
             ;;
@@ -376,7 +403,7 @@ show_menu() {
 
 # 主函数
 main() {
-    show_menu
+    show_menu "$@"
 }
 
 # 执行主函数

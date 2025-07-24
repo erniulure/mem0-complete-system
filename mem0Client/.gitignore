@@ -9,6 +9,8 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+# Exception: Allow streamlit_chat_prompt frontend build files
+!streamlit_chat_prompt/frontend/build/
 develop-eggs/
 dist/
 downloads/

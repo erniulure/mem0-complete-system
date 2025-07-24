@@ -100,15 +100,56 @@ COMMENT ON TABLE mem0_login_attempts IS 'Mem0系统登录尝试记录表';
 COMMENT ON TABLE mem0_user_settings IS 'Mem0系统用户设置表';
 COMMENT ON TABLE mem0_user_sessions IS 'Mem0系统用户会话表';
 
+-- 插入默认管理员用户配置（如果不存在）
+INSERT INTO mem0_user_settings (user_id, setting_key, setting_value)
+SELECT 'admin_default', 'custom_instructions', '请提取并结构化重要信息，保持清晰明了。'
+WHERE NOT EXISTS (
+    SELECT 1 FROM mem0_user_settings WHERE user_id = 'admin_default' AND setting_key = 'custom_instructions'
+);
+
+INSERT INTO mem0_user_settings (user_id, setting_key, setting_value)
+SELECT 'admin_default', 'include_content_types', '["技术文档", "个人信息"]'
+WHERE NOT EXISTS (
+    SELECT 1 FROM mem0_user_settings WHERE user_id = 'admin_default' AND setting_key = 'include_content_types'
+);
+
+INSERT INTO mem0_user_settings (user_id, setting_key, setting_value)
+SELECT 'admin_default', 'exclude_content_types', '[]'
+WHERE NOT EXISTS (
+    SELECT 1 FROM mem0_user_settings WHERE user_id = 'admin_default' AND setting_key = 'exclude_content_types'
+);
+
+INSERT INTO mem0_user_settings (user_id, setting_key, setting_value)
+SELECT 'admin_default', 'max_results', '21'
+WHERE NOT EXISTS (
+    SELECT 1 FROM mem0_user_settings WHERE user_id = 'admin_default' AND setting_key = 'max_results'
+);
+
+INSERT INTO mem0_user_settings (user_id, setting_key, setting_value)
+SELECT 'admin_default', 'smart_reasoning', 'true'
+WHERE NOT EXISTS (
+    SELECT 1 FROM mem0_user_settings WHERE user_id = 'admin_default' AND setting_key = 'smart_reasoning'
+);
+
+INSERT INTO mem0_user_settings (user_id, setting_key, setting_value)
+SELECT 'admin_default', 'system_initialized', 'true'
+WHERE NOT EXISTS (
+    SELECT 1 FROM mem0_user_settings WHERE user_id = 'admin_default' AND setting_key = 'system_initialized'
+);
+
 -- 输出初始化结果
 DO $$
 DECLARE
     user_count INTEGER;
+    settings_count INTEGER;
 BEGIN
     SELECT COUNT(*) INTO user_count FROM mem0_users;
+    SELECT COUNT(*) INTO settings_count FROM mem0_user_settings WHERE user_id = 'admin_default';
+
     RAISE NOTICE '✅ Mem0用户表初始化完成，当前用户数: %', user_count;
 
     IF EXISTS (SELECT 1 FROM mem0_users WHERE username = 'admin') THEN
         RAISE NOTICE '✅ 默认管理员账户已创建 (用户名: admin, 密码: admin123)';
+        RAISE NOTICE '✅ 默认管理员配置已创建，配置项数: %', settings_count;
     END IF;
 END $$;

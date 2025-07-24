@@ -141,15 +141,19 @@ main() {
         ./config-wizard.sh
     fi
     
+    # 自动配置Gemini-Balance集成
+    log_step "配置Gemini-Balance集成..."
+    configure_gemini_integration
+
     # 构建和启动服务
     log_step "构建和启动服务..."
     docker-compose build
     docker-compose up -d
-    
-    # 等待服务启动
+
+    # 等待服务启动并进行健康检查
     log_info "等待服务启动..."
-    sleep 30
-    
+    wait_for_services_healthy
+
     # 检查服务状态
     check_services
     
@@ -157,12 +161,78 @@ main() {
     show_completion
 }
 
+# 配置Gemini-Balance集成
+configure_gemini_integration() {
+    log_info "检测Gemini-Balance服务..."
+
+    # 检查是否有Gemini-Balance服务运行
+    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        log_success "检测到Gemini-Balance服务，配置集成..."
+
+        # 更新.env文件以使用Gemini-Balance
+        if [ -f ".env" ]; then
+            # 设置正确的API配置
+            sed -i 's/OPENAI_API_KEY=.*/OPENAI_API_KEY=q1q2q3q4/' .env
+            sed -i 's|OPENAI_BASE_URL=.*|OPENAI_BASE_URL=http://gemini-balance:8000/v1|' .env
+
+            log_success "环境变量配置完成"
+        fi
+
+        # 使用Gemini配置文件
+        if [ -f "configs/mem0-config-gemini.yaml" ]; then
+            cp configs/mem0-config-gemini.yaml configs/mem0-config.yaml
+            log_success "Gemini配置文件已应用"
+        fi
+
+    else
+        log_warning "未检测到Gemini-Balance服务，使用默认配置"
+        log_info "如需使用Gemini-Balance，请先部署该服务"
+    fi
+}
+
+# 等待服务健康检查
+wait_for_services_healthy() {
+    log_info "等待服务健康检查..."
+    local max_attempts=30
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        local all_healthy=true
+
+        # 检查PostgreSQL
+        if ! docker exec mem0-postgres pg_isready -U mem0 > /dev/null 2>&1; then
+            all_healthy=false
+        fi
+
+        # 检查Qdrant
+        if ! curl -s http://localhost:6333/health > /dev/null 2>&1; then
+            all_healthy=false
+        fi
+
+        # 检查Mem0 API
+        if ! curl -s http://localhost:8888/ > /dev/null 2>&1; then
+            all_healthy=false
+        fi
+
+        if $all_healthy; then
+            log_success "所有服务健康检查通过"
+            return 0
+        fi
+
+        attempt=$((attempt + 1))
+        echo -n "."
+        sleep 2
+    done
+
+    log_warning "部分服务可能未完全启动，继续安装..."
+}
+
 # 检查服务状态
 check_services() {
     log_step "检查服务状态..."
-    
-    local services=("mem0-postgres" "mem0-qdrant" "mem0-api" "mem0-webui-persistent")
-    
+
+    local services=("mem0-postgres" "mem0-qdrant" "mem0-api" "mem0-webui")
+
     for service in "${services[@]}"; do
         if docker ps | grep -q "$service"; then
             log_success "$service 运行正常"

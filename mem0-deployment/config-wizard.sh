@@ -43,6 +43,8 @@ declare -A DEFAULT_CONFIG=(
     ["GEMINI_BALANCE_MODE"]="external"
     ["EXTERNAL_GEMINI_BALANCE_URL"]="http://gemini-balance:8000/v1"
     ["EXTERNAL_GEMINI_BALANCE_TOKEN"]="q1q2q3q4"
+    ["OPENAI_API_KEY"]="q1q2q3q4"
+    ["OPENAI_BASE_URL"]="http://gemini-balance:8000/v1"
     
     # 安全配置
     ["SESSION_SECRET_KEY"]="mem0-secret-key-change-in-production"
@@ -272,10 +274,31 @@ configure_advanced() {
     fi
 }
 
+# 自动检测和配置Gemini-Balance
+auto_detect_gemini_balance() {
+    log_info "自动检测Gemini-Balance服务..."
+
+    # 检查是否有Gemini-Balance服务运行
+    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        log_success "检测到Gemini-Balance服务，自动配置集成"
+        DEFAULT_CONFIG["OPENAI_API_KEY"]="q1q2q3q4"
+        DEFAULT_CONFIG["OPENAI_BASE_URL"]="http://gemini-balance:8000/v1"
+        DEFAULT_CONFIG["GEMINI_BALANCE_MODE"]="external"
+    else
+        log_warning "未检测到Gemini-Balance服务"
+        log_info "将使用默认配置，如需AI功能请配置OpenAI API密钥"
+        DEFAULT_CONFIG["OPENAI_API_KEY"]=""
+        DEFAULT_CONFIG["OPENAI_BASE_URL"]=""
+    fi
+}
+
 # 生成.env文件
 generate_env_file() {
     log_step "生成环境配置文件..."
-    
+
+    # 自动检测Gemini-Balance
+    auto_detect_gemini_balance
+
     cat > "$ENV_FILE" << EOF
 # ===========================================
 # Mem0 记忆管理系统 - 环境配置文件

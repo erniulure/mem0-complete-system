@@ -125,7 +125,11 @@ full_install() {
     cd gemini-balance
     if [ -f "deploy.sh" ]; then
         chmod +x deploy.sh
-        ./deploy.sh
+        if [[ "$1" == "--auto" ]]; then
+            ./deploy.sh --auto
+        else
+            ./deploy.sh
+        fi
     else
         log_warning "Gemini-Balance部署脚本不存在，跳过"
     fi
@@ -177,7 +181,11 @@ custom_install() {
         cd gemini-balance
         if [ -f "deploy.sh" ]; then
             chmod +x deploy.sh
-            ./deploy.sh
+            if [[ "$1" == "--auto" ]]; then
+                ./deploy.sh --auto
+            else
+                ./deploy.sh
+            fi
         fi
         cd ..
     fi
@@ -195,6 +203,59 @@ custom_install() {
     fi
     
     log_success "自定义安装完成！"
+}
+
+# 自动修复配置
+auto_fix_configuration() {
+    log_info "检查和修复配置..."
+
+    # 检查Gemini-Balance是否运行
+    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+        log_info "检测到Gemini-Balance，配置Mem0集成..."
+
+        # 进入mem0-deployment目录
+        cd mem0-deployment 2>/dev/null || return
+
+        # 更新.env文件
+        if [ -f ".env" ]; then
+            sed -i 's/OPENAI_API_KEY=.*/OPENAI_API_KEY=q1q2q3q4/' .env
+            sed -i 's|OPENAI_BASE_URL=.*|OPENAI_BASE_URL=http://gemini-balance:8000/v1|' .env
+        fi
+
+        # 使用Gemini配置
+        if [ -f "configs/mem0-config-gemini.yaml" ]; then
+            cp configs/mem0-config-gemini.yaml configs/mem0-config.yaml
+        fi
+
+        # 重启Mem0 API以应用配置
+        docker-compose restart mem0-api > /dev/null 2>&1
+
+        # 等待服务重启
+        sleep 10
+
+        cd .. 2>/dev/null || true
+        log_success "配置修复完成"
+    fi
+}
+
+# 自动修复并重试
+auto_fix_and_retry() {
+    log_info "尝试自动修复服务问题..."
+
+    # 重启所有服务
+    cd mem0-deployment 2>/dev/null || return
+    docker-compose restart > /dev/null 2>&1
+    cd .. 2>/dev/null || true
+
+    # 等待服务重启
+    sleep 15
+
+    # 再次验证
+    if verify_installation; then
+        echo -e "${GREEN}✅ 自动修复成功！${NC}"
+    else
+        echo -e "${YELLOW}⚠️  部分服务仍有问题，请查看日志进行手动排查${NC}"
+    fi
 }
 
 # 验证安装状态
@@ -232,6 +293,20 @@ verify_installation() {
         all_services_ok=false
     fi
 
+    # 测试Mem0 API功能
+    if $all_services_ok; then
+        echo -e "\n🧪 测试Mem0 API功能..."
+        local test_result=$(curl -s -X POST http://localhost:8888/memories \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"role":"user","content":"测试记忆"}],"user_id":"test"}' 2>/dev/null)
+
+        if echo "$test_result" | grep -q "results"; then
+            service_status+="✅ Mem0 API功能: 测试通过\n"
+        else
+            service_status+="⚠️  Mem0 API功能: 需要配置AI服务\n"
+        fi
+    fi
+
     # 检查Docker容器状态
     local containers_status=$(docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(mem0|qdrant|gemini|postgres)")
 
@@ -259,13 +334,22 @@ show_completion() {
     echo "============================================================================="
     echo -e "${NC}"
 
+    # 确保网络连接正常
+    echo "🔗 配置服务网络连接..."
+    docker network connect mem0-deployment_mem0-network gemini-balance 2>/dev/null || true
+
+    # 自动修复配置问题
+    echo "🔧 自动修复配置..."
+    auto_fix_configuration
+
     # 验证安装
     if verify_installation; then
         echo ""
         echo -e "${GREEN}🎯 安装验证: 所有服务运行正常！${NC}"
     else
         echo ""
-        echo -e "${RED}⚠️  安装验证: 部分服务异常，请查看上方状态检查${NC}"
+        echo -e "${RED}⚠️  安装验证: 部分服务异常，正在尝试自动修复...${NC}"
+        auto_fix_and_retry
     fi
 
     echo ""
@@ -284,7 +368,7 @@ show_completion() {
     echo ""
     echo "🔐 默认账户："
     echo "  👤 用户名: admin"
-    echo "  🔑 密码: q1q2q3q4"
+    echo "  🔑 密码: admin123"
     echo ""
     echo "🚀 快速开始："
     echo "  1. 打开浏览器访问: http://localhost:8503"

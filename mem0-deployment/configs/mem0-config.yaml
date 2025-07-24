@@ -1,17 +1,17 @@
-# Mem0 配置文件 - 生产环境
+# Mem0 配置文件 - Gemini Balance模式
 version: "v1.1"
 
 llm:
-  provider: openai
+  provider: openai  # 使用OpenAI兼容接口连接Gemini Balance
   config:
-    model: gpt-4o-mini
+    model: gemini-2.0-flash-exp
     temperature: 0.3
     max_tokens: 8000
 
 embedder:
-  provider: openai
+  provider: openai  # 使用OpenAI兼容接口连接Gemini Balance
   config:
-    model: text-embedding-3-small
+    model: text-embedding-004
 
 vector_store:
   provider: qdrant
@@ -19,4 +19,4 @@ vector_store:
     collection_name: mem0_collection
     host: mem0-qdrant
     port: 6333
-    embedding_model_dims: 768
+    embedding_model_dims: 768  # Gemini embedding dimensions

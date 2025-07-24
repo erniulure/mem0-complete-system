@@ -24,8 +24,8 @@ from modern_chat_interface import modern_smart_chat_interface
 from auth_system import AuthSystem
 from api_patches import MemoryAPIPatched, SecurityUtils, apply_security_patches
 
-# API基础配置 - 使用宿主机IP
-API_BASE_URL = os.getenv('MEM0_API_URL', 'http://192.168.8.220:8888')
+# API基础配置 - 使用宿主机地址
+API_BASE_URL = os.getenv('MEM0_API_URL', 'http://localhost:8888')
 
 # 页面配置
 st.set_page_config(
@@ -104,15 +104,9 @@ class MemoryAPI:
 
     @staticmethod
     def get_api_url():
-        """获取当前配置的API URL"""
-        # 确保api_settings已初始化
-        if 'api_settings' not in st.session_state:
-            st.session_state.api_settings = {
-                'api_url': API_BASE_URL,
-                'api_key': '',
-                'connected': False
-            }
-        return st.session_state.api_settings.get('api_url', API_BASE_URL)
+        """获取记忆管理API的URL - 固定使用mem0-api服务"""
+        # 记忆管理功能使用固定的mem0-api地址
+        return 'http://mem0-api:8000'
 
     @staticmethod
     def test_connection():
@@ -206,12 +200,13 @@ if 'config' not in st.session_state:
         st.session_state.searcher = MemorySearcher(st.session_state.config)
         # 初始化动态模型选择器
         st.session_state.model_selector = DynamicModelSelector(
-            api_base_url=API_BASE_URL,
-            api_key=os.getenv('OPENAI_API_KEY', '')
+            api_base_url='http://gemini-balance:8000',
+            api_key='admin123'
         )
         st.session_state.multimodal_processor = MultimodalProcessor()
         st.session_state.initialized = True
-        st.session_state.api_connected = MemoryAPI.test_connection()
+        # 初始化API连接状态为False，需要用户手动测试
+        st.session_state.api_connected = False
     except Exception as e:
         st.session_state.initialized = False
         st.session_state.init_error = str(e)
@@ -221,13 +216,82 @@ if 'config' not in st.session_state:
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 
-# 初始化API设置
+# 初始化API设置 - 从数据库加载保存的设置
 if 'api_settings' not in st.session_state:
-    st.session_state.api_settings = {
+    # 默认设置
+    default_settings = {
         'api_url': API_BASE_URL,
         'api_key': '',
         'connected': st.session_state.get('api_connected', False)
     }
+
+    # 尝试从数据库加载保存的设置
+    try:
+        import psycopg2
+        import os
+
+        # 数据库连接配置
+        db_config = {
+            'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
+            'database': os.getenv('POSTGRES_DB', 'mem0'),
+            'user': os.getenv('POSTGRES_USER', 'mem0'),
+            'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024'),
+            'port': 5432
+        }
+
+        # 获取当前用户ID
+        current_user_id = getattr(st.session_state, 'user_info', {}).get('user_id', 'admin_default')
+
+        # 连接数据库并加载设置
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # 查询保存的API设置
+        cursor.execute("""
+            SELECT setting_key, setting_value
+            FROM mem0_user_settings
+            WHERE user_id = %s AND setting_key IN ('api_url', 'api_key')
+        """, (current_user_id,))
+
+        saved_settings = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # 应用保存的设置
+        for setting_key, setting_value in saved_settings:
+            if setting_key in default_settings:
+                default_settings[setting_key] = setting_value
+
+    except Exception as e:
+        # 数据库加载失败时使用默认设置
+        pass
+
+    st.session_state.api_settings = default_settings
+
+    # 如果API设置已配置，自动测试连接状态
+    if default_settings.get('api_key') and default_settings.get('api_url'):
+        try:
+            # 自动测试API连接
+            import requests
+            api_url = default_settings['api_url']
+            api_key = default_settings['api_key']
+
+            headers = {
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json'
+            }
+
+            response = requests.get(f"{api_url}/v1/models", headers=headers, timeout=5)
+            if response.status_code == 200:
+                st.session_state.api_connected = True
+                st.session_state.api_settings['connected'] = True
+            else:
+                st.session_state.api_connected = False
+                st.session_state.api_settings['connected'] = False
+        except:
+            # 连接测试失败，保持默认状态
+            st.session_state.api_connected = False
+            st.session_state.api_settings['connected'] = False
 
 # 初始化用户设置 - 从配置文件加载持久化设置
 if 'user_settings' not in st.session_state:
@@ -363,7 +427,7 @@ def render_sidebar():
             "API密钥",
             value=st.session_state.api_settings['api_key'],
             type="password",
-            help="您的Mem0 API密钥"
+            help="大模型API认证token（用于调用AI服务）"
         )
 
         # 表单提交按钮（隐藏，通过其他按钮触发更新）
@@ -464,18 +528,57 @@ def render_sidebar():
     with col1:
         if st.button("💾 保存设置", type="primary"):
             try:
-                if 'config' in st.session_state and st.session_state.config:
-                    st.session_state.config.update_advanced_settings(
-                        custom_instructions=st.session_state.user_settings['custom_instructions'],
-                        includes=st.session_state.user_settings['includes'],
-                        excludes=st.session_state.user_settings['excludes'],
-                        infer=st.session_state.user_settings['infer']
-                    )
-                    st.success("✅ 设置已保存！")
-                else:
-                    st.error("❌ 配置系统未初始化")
+                import psycopg2
+                import json
+
+                # 数据库连接配置
+                db_config = {
+                    'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
+                    'database': os.getenv('POSTGRES_DB', 'mem0'),
+                    'user': os.getenv('POSTGRES_USER', 'mem0'),
+                    'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024'),
+                    'port': 5432
+                }
+
+                # 获取当前用户ID
+                current_user_id = st.session_state.get('current_user_id', 'admin_default')
+
+                # 连接数据库
+                conn = psycopg2.connect(**db_config)
+                cursor = conn.cursor()
+
+                # 准备要保存的设置（从user_settings获取）
+                settings_to_save = [
+                    ('custom_instructions', st.session_state.user_settings.get('custom_instructions', '请提取并结构化重要信息，保持清晰明了。')),
+                    ('include_content_types', json.dumps(st.session_state.user_settings.get('includes', '技术文档, API').split(', '))),
+                    ('exclude_content_types', json.dumps(st.session_state.user_settings.get('excludes', '个人信息').split(', '))),
+                    ('max_results', str(st.session_state.user_settings.get('max_results', 21))),
+                    ('smart_reasoning', str(st.session_state.user_settings.get('infer', True)).lower()),
+                    ('system_initialized', 'true')
+                ]
+
+                # 保存每个设置
+                for setting_key, setting_value in settings_to_save:
+                    cursor.execute("""
+                        INSERT INTO mem0_user_settings (user_id, setting_key, setting_value, updated_at)
+                        VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (user_id, setting_key)
+                        DO UPDATE SET
+                            setting_value = EXCLUDED.setting_value,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, (current_user_id, setting_key, setting_value))
+
+                # 提交事务
+                conn.commit()
+                cursor.close()
+                conn.close()
+
+                st.success("✅ 设置已保存到数据库！")
+
             except Exception as e:
                 st.error(f"❌ 保存失败: {str(e)}")
+                # 显示详细错误信息用于调试
+                st.error(f"详细错误: {type(e).__name__}: {str(e)}")
 
     with col2:
         if st.button("🔄 重置设置", type="secondary"):
@@ -505,14 +608,93 @@ def render_sidebar():
 def test_api_connection(api_url: str, api_key: str):
     """测试API连接"""
     try:
-        # 这里可以添加实际的API连接测试
-        st.session_state.api_settings.update({
-            'api_url': api_url,
-            'api_key': api_key,
-            'connected': True
-        })
-        st.session_state.api_connected = True
-        st.success("✅ API连接成功！")
+        import requests
+        import time
+
+        # 实际测试API连接
+        test_url = api_url.rstrip('/')
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json'
+        }
+
+        # 发送测试请求，设置超时
+        response = requests.get(test_url, headers=headers, timeout=5)
+
+        if response.status_code == 200:
+            # 连接成功
+            st.session_state.api_settings.update({
+                'api_url': api_url,
+                'api_key': api_key,
+                'connected': True
+            })
+            st.session_state.api_connected = True
+
+            # 保存API设置到数据库
+            try:
+                st.info(f"🔄 开始保存API设置到数据库: api_url={api_url}, api_key={api_key[:4]}****")
+                import psycopg2
+                import os
+
+                # 数据库连接配置
+                db_config = {
+                    'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
+                    'database': os.getenv('POSTGRES_DB', 'mem0'),
+                    'user': os.getenv('POSTGRES_USER', 'mem0'),
+                    'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024'),
+                    'port': 5432
+                }
+
+                # 获取当前用户ID
+                current_user_id = getattr(st.session_state, 'user_info', {}).get('user_id', 'admin_default')
+
+                # 连接数据库并保存设置
+                conn = psycopg2.connect(**db_config)
+                cursor = conn.cursor()
+
+                # 保存API设置
+                settings_to_save = [
+                    ('api_url', api_url),
+                    ('api_key', api_key)
+                ]
+
+                for setting_key, setting_value in settings_to_save:
+                    cursor.execute("""
+                        INSERT INTO mem0_user_settings (user_id, setting_key, setting_value, updated_at)
+                        VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (user_id, setting_key)
+                        DO UPDATE SET
+                            setting_value = EXCLUDED.setting_value,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, (current_user_id, setting_key, setting_value))
+
+                # 提交事务
+                conn.commit()
+                cursor.close()
+                conn.close()
+
+                st.info("💾 API设置已成功保存到数据库！")
+
+            except Exception as db_error:
+                # 数据库保存失败不影响连接测试，但要记录错误
+                st.warning(f"⚠️ 数据库保存失败: {str(db_error)}")
+                import traceback
+                print(f"数据库保存错误详情: {traceback.format_exc()}")
+
+            st.success("✅ API连接成功！")
+            # 刷新页面以更新连接状态显示
+            st.rerun()
+        else:
+            # 连接失败
+            st.session_state.api_connected = False
+            st.error(f"❌ API连接失败: HTTP {response.status_code}")
+
+    except requests.exceptions.Timeout:
+        st.session_state.api_connected = False
+        st.error("❌ API连接超时，请检查服务是否正常运行")
+    except requests.exceptions.ConnectionError:
+        st.session_state.api_connected = False
+        st.error("❌ 无法连接到API服务，请检查地址是否正确")
     except Exception as e:
         st.session_state.api_connected = False
         st.error(f"❌ API连接失败: {str(e)}")
@@ -1716,13 +1898,17 @@ def system_settings_interface(auth_system):
 
     strategy = "dynamic_ai_recommendation"  # 固定使用动态推荐
 
+    # 创建新的列布局用于模型偏好设置
+    pref_col1, pref_col2 = st.columns(2)
+
+    with pref_col1:
         show_model_info = st.checkbox(
             "显示模型选择信息",
             value=st.session_state.model_preferences.get('show_model_info', True),
             help="在对话和操作中显示模型选择的详细信息"
         )
 
-    with col2:
+    with pref_col2:
         if strategy == "auto_intelligent":
             st.markdown("**智能选择偏好:**")
             prefer_speed = st.checkbox(
@@ -1762,7 +1948,7 @@ def system_settings_interface(auth_system):
     with st.expander("API配置", expanded=True):
         # 使用表单包装API配置，避免密码字段警告
         with st.form("debug_api_config_form", clear_on_submit=False):
-            api_url = st.text_input("API地址", value=os.getenv('MEM0_API_URL', 'http://192.168.8.220:8888'))
+            api_url = st.text_input("API地址", value=os.getenv('MEM0_API_URL', 'http://mem0-api:8000'))
             api_key = st.text_input("API密钥", type="password")
             api_timeout = st.number_input("超时时间(秒)", min_value=5, max_value=300, value=30)
 
@@ -2124,17 +2310,60 @@ def test_api_connection_detailed():
             st.session_state.api_connected = False
 
 def save_all_settings():
-    """保存所有设置"""
+    """保存所有设置到数据库"""
     try:
-        # 这里可以添加设置保存逻辑
-        # 目前设置都保存在session_state中
+        import psycopg2
+        import json
 
-        st.success("✅ 设置已保存！")
+        # 数据库连接配置
+        db_config = {
+            'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
+            'database': os.getenv('POSTGRES_DB', 'mem0'),
+            'user': os.getenv('POSTGRES_USER', 'mem0'),
+            'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024'),
+            'port': 5432
+        }
+
+        # 获取当前用户ID
+        current_user_id = st.session_state.get('current_user_id', 'admin_default')
+
+        # 连接数据库
+        conn = psycopg2.connect(**db_config)
+        cursor = conn.cursor()
+
+        # 准备要保存的设置
+        settings_to_save = [
+            ('custom_instructions', st.session_state.model_preferences.get('custom_instructions', '请提取并结构化重要信息，保持清晰明了。')),
+            ('include_content_types', json.dumps(["技术文档", "个人信息"])),
+            ('exclude_content_types', json.dumps([])),
+            ('max_results', str(st.session_state.model_preferences.get('max_results', 21))),
+            ('smart_reasoning', str(st.session_state.model_preferences.get('smart_reasoning', True)).lower()),
+            ('show_model_info', str(st.session_state.model_preferences.get('show_model_info', True)).lower()),
+            ('system_initialized', 'true')
+        ]
+
+        # 保存每个设置
+        for setting_key, setting_value in settings_to_save:
+            cursor.execute("""
+                INSERT INTO mem0_user_settings (user_id, setting_key, setting_value, updated_at)
+                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, setting_key)
+                DO UPDATE SET
+                    setting_value = EXCLUDED.setting_value,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (current_user_id, setting_key, setting_value))
+
+        # 提交事务
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        st.success("✅ 设置已保存到数据库！")
 
         # 显示当前设置
         with st.expander("📋 当前设置"):
-            st.write("**用户设置:**")
-            for key, value in st.session_state.user_settings.items():
+            st.write("**模型偏好设置:**")
+            for key, value in st.session_state.model_preferences.items():
                 st.write(f"- {key}: {value}")
 
             st.write("**API设置:**")
@@ -2144,6 +2373,8 @@ def save_all_settings():
 
     except Exception as e:
         st.error(f"❌ 保存失败: {str(e)}")
+        # 显示详细错误信息用于调试
+        st.error(f"详细错误: {type(e).__name__}: {str(e)}")
 
 if __name__ == "__main__":
     main()

@@ -17,12 +17,21 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         # 智能模型选择
         has_image = image_info is not None and image_info.get("success", False)
         content_for_analysis = user_text or "图片分析请求"
-        
+
+        # 确保model_selector已初始化
+        if 'model_selector' not in st.session_state:
+            from dynamic_model_selector import DynamicModelSelector
+            # 从用户配置中获取API密钥
+            api_key = st.session_state.get('api_settings', {}).get('api_key', 'q1q2q3q4')
+            st.session_state.model_selector = DynamicModelSelector(
+                api_base_url='http://gemini-balance:8000',
+                api_key=api_key
+            )
+
         # 选择合适的模型
         model_info = st.session_state.model_selector.select_optimal_model(
-            content=content_for_analysis,
-            has_image=has_image,
-            user_preferences=st.session_state.get('model_preferences', {})
+            user_query=content_for_analysis,
+            has_image=has_image
         )
         
         # 添加用户消息到聊天历史
@@ -39,17 +48,15 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         st.session_state.chat_history.append(user_message)
         
         # 简化的生产级对话系统
-        import os
-        import requests
-        import json
 
         # 获取用户ID
         user_id = getattr(st.session_state, 'user_settings', {}).get('user_id', 'default_user')
 
         # 第一步：调用gemini-balance获取AI回复
-        # 使用宿主机真实IP地址
-        gemini_balance_url = os.getenv('GEMINI_BALANCE_URL', 'http://192.168.8.220:8000/v1')
-        auth_token = os.getenv('GEMINI_BALANCE_TOKEN', 'q1q2q3q4')
+        # 使用Docker内部网络地址
+        gemini_balance_url = os.getenv('GEMINI_BALANCE_URL', 'http://gemini-balance:8000/v1')
+        # 从用户配置中获取API密钥，如果没有则使用环境变量或默认值
+        auth_token = st.session_state.get('api_settings', {}).get('api_key') or os.getenv('INTEGRATED_GEMINI_BALANCE_TOKEN', os.getenv('GEMINI_BALANCE_TOKEN', 'q1q2q3q4'))
 
         # 构建对话消息
         messages = [

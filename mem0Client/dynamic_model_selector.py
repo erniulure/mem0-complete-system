@@ -17,8 +17,8 @@ class DynamicModelSelector:
     
     def __init__(self, api_base_url: str = None, api_key: str = None):
         # 使用Gemini Balance服务
-        self.api_base_url = api_base_url or 'http://localhost:8000'
-        self.api_key = api_key or 'q1q2q3q4'
+        self.api_base_url = api_base_url or 'http://gemini-balance:8000'
+        self.api_key = api_key or 'admin123'
         self.available_models = []
         self.fast_model = None
         self.model_capabilities = {}
