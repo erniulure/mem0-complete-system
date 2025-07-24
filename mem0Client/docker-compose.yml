@@ -14,11 +14,19 @@ services:
       - STREAMLIT_SERVER_ADDRESS=0.0.0.0
       - STREAMLIT_SERVER_HEADLESS=true
       - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      # 原有的mem0数据库配置（兼容性）
       - POSTGRES_HOST=mem0-postgres
       - POSTGRES_DB=mem0
       - POSTGRES_USER=mem0
       - POSTGRES_PASSWORD=mem0_secure_password_2024
       - POSTGRES_PORT=5432
+      # WebUI独立数据库配置
+      - WEBUI_POSTGRES_HOST=host.docker.internal
+      - WEBUI_POSTGRES_PORT=5433
+      - WEBUI_POSTGRES_DB=webui
+      - WEBUI_POSTGRES_USER=webui
+      - WEBUI_POSTGRES_PASSWORD=webui_secure_password_2024
+      # API配置
       - MEM0_API_URL=http://mem0-api:8000
       - MEM0_API_KEY=${MEM0_API_KEY:-local_api_key}
     volumes:

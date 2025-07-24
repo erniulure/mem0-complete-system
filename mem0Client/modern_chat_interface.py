@@ -12,8 +12,23 @@ from datetime import datetime
 from streamlit_chat_prompt import prompt
 
 def handle_modern_chat_message(user_text: str, image_info: dict = None):
-    """处理现代化聊天消息"""
+    """处理现代化聊天消息 - 集成智能记忆功能"""
     try:
+        # 初始化智能记忆管理器
+        if 'memory_manager' not in st.session_state:
+            from intelligent_memory_manager import IntelligentMemoryManager
+            from api_patches import MemoryAPIPatched
+
+            user_id = getattr(st.session_state, 'user_settings', {}).get('user_id', 'default_user')
+            mem0_api_url = MemoryAPIPatched.get_api_url()
+
+            st.session_state.memory_manager = IntelligentMemoryManager(
+                mem0_api_url=mem0_api_url,
+                user_id=user_id
+            )
+
+        memory_manager = st.session_state.memory_manager
+
         # 智能模型选择
         has_image = image_info is not None and image_info.get("success", False)
         content_for_analysis = user_text or "图片分析请求"
@@ -21,7 +36,6 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         # 确保model_selector已初始化
         if 'model_selector' not in st.session_state:
             from dynamic_model_selector import DynamicModelSelector
-            # 从用户配置中获取API密钥
             api_key = st.session_state.get('api_settings', {}).get('api_key', 'q1q2q3q4')
             st.session_state.model_selector = DynamicModelSelector(
                 api_base_url='http://gemini-balance:8000',
@@ -33,41 +47,64 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
             user_query=content_for_analysis,
             has_image=has_image
         )
-        
+
+        # 🧠 智能记忆分析：判断是否需要检索历史记忆
+        memory_analysis = memory_manager.analyze_memory_need(user_text)
+
+        # 显示记忆分析状态（可选）
+        if memory_analysis['needs_memory']:
+            with st.spinner(f"🧠 正在回忆相关信息... (置信度: {memory_analysis['confidence']:.2f})"):
+                # 🔍 搜索相关记忆（使用同步版本）
+                relevant_memories = memory_manager.search_relevant_memories_sync(user_text, limit=5)
+
+                # 📝 构建增强的上下文
+                enhanced_user_input = memory_manager.build_context_with_memories(
+                    user_text, relevant_memories, memory_analysis
+                )
+        else:
+            enhanced_user_input = user_text
+            relevant_memories = []
+
         # 添加用户消息到聊天历史
         user_message = {
             "role": "user",
             "content": user_text,
             "timestamp": st.session_state.get('current_time', ''),
-            "model_info": model_info
+            "model_info": model_info,
+            "memory_analysis": memory_analysis,
+            "used_memories": len(relevant_memories)
         }
-        
+
         if image_info:
             user_message["image_info"] = image_info
-            
+
         st.session_state.chat_history.append(user_message)
         
-        # 简化的生产级对话系统
+        # 🤖 智能对话系统 - 集成记忆功能
 
         # 获取用户ID
         user_id = getattr(st.session_state, 'user_settings', {}).get('user_id', 'default_user')
 
-        # 第一步：调用gemini-balance获取AI回复
-        # 使用Docker内部网络地址
+        # 调用gemini-balance获取AI回复
         gemini_balance_url = os.getenv('GEMINI_BALANCE_URL', 'http://gemini-balance:8000/v1')
-        # 从用户配置中获取API密钥，如果没有则使用环境变量或默认值
         auth_token = st.session_state.get('api_settings', {}).get('api_key') or os.getenv('INTEGRATED_GEMINI_BALANCE_TOKEN', os.getenv('GEMINI_BALANCE_TOKEN', 'q1q2q3q4'))
 
-        # 构建对话消息
+        # 构建智能对话消息
         messages = [
             {
                 "role": "system",
-                "content": "你是一个智能助手，能够帮助用户处理各种问题。请用中文回复。"
+                "content": """你是一个具有记忆能力的智能助手。你能够：
+1. 记住用户的个人信息、偏好和历史对话
+2. 基于历史记忆提供个性化的回复
+3. 自然地引用相关的历史信息
+4. 在信息不确定时主动询问用户确认
+
+请用中文回复，保持对话的自然性和连贯性。"""
             }
         ]
 
-        # 添加聊天历史（最近5条）
-        recent_history = st.session_state.chat_history[-10:] if len(st.session_state.chat_history) > 0 else []
+        # 添加聊天历史（最近5条，不包括当前消息）
+        recent_history = st.session_state.chat_history[-10:] if len(st.session_state.chat_history) > 1 else []
         for msg in recent_history:
             if msg['role'] in ['user', 'assistant']:
                 messages.append({
@@ -75,10 +112,10 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
                     "content": msg['content']
                 })
 
-        # 添加当前用户消息
+        # 添加增强的用户消息（包含记忆上下文）
         messages.append({
             "role": "user",
-            "content": user_text
+            "content": enhanced_user_input  # 使用增强的输入而不是原始输入
         })
 
         # 调用gemini-balance API
@@ -107,36 +144,38 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         result = response.json()
         ai_response = result.get("choices", [{}])[0].get("message", {}).get("content", "抱歉，我无法处理您的请求。")
 
-        # 第二步：异步保存对话记忆到mem0-api（不阻塞用户体验）
+        # 🧠 智能记忆存储：AI自动判断是否存储对话
+        memory_storage_result = None
         try:
-            from api_patches import MemoryAPIPatched
-            api_base_url = MemoryAPIPatched.get_api_url()
+            with st.spinner("🧠 AI正在分析是否需要记住这次对话..."):
+                memory_storage_result = memory_manager.intelligent_store_memory_sync(
+                    user_text, ai_response
+                )
 
-            # 构建对话记录用于记忆保存
-            conversation_content = f"用户: {user_text}\n助手: {ai_response}"
+                # 显示记忆存储状态（可选）
+                if memory_storage_result['stored']:
+                    st.success(f"✅ {memory_storage_result['reason']}")
+                elif memory_storage_result['confidence'] > 0.2:
+                    st.info(f"ℹ️ {memory_storage_result['reason']}")
 
-            memory_payload = {
-                "messages": [{"role": "user", "content": conversation_content}],
-                "user_id": user_id
+        except Exception as memory_error:
+            # 记忆存储失败不影响对话功能
+            print(f"智能记忆存储失败: {memory_error}")
+            memory_storage_result = {
+                'stored': False,
+                'reason': f"存储失败: {str(memory_error)}",
+                'value_level': 'unknown',
+                'confidence': 0.0
             }
 
-            # 异步保存记忆（不等待结果）
-            requests.post(
-                f"{api_base_url}/memories",
-                json=memory_payload,
-                timeout=5
-            )
-        except Exception as memory_error:
-            # 记忆保存失败不影响对话功能
-            print(f"记忆保存失败: {memory_error}")
-            pass
-
-        # 添加AI回复到聊天历史
+        # 添加AI回复到聊天历史（包含记忆信息）
         assistant_message = {
             "role": "assistant",
             "content": ai_response,
             "timestamp": st.session_state.get('current_time', ''),
-            "model": model_info.get('selected_model', 'unknown')
+            "model": model_info.get('selected_model', 'unknown'),
+            "memory_storage": memory_storage_result,
+            "used_memories": len(relevant_memories) if relevant_memories else 0
         }
         st.session_state.chat_history.append(assistant_message)
 
@@ -147,6 +186,14 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         st.session_state.api_connected = True
         if 'api_settings' in st.session_state:
             st.session_state.api_settings['connected'] = True
+
+        # 显示记忆透明度信息（可选）
+        if relevant_memories:
+            with st.expander(f"🧠 本次对话使用了 {len(relevant_memories)} 条历史记忆", expanded=False):
+                for i, memory in enumerate(relevant_memories[:3], 1):
+                    st.write(f"**记忆 {i}** (相关度: {memory.get('score', 0.0):.2f})")
+                    st.write(memory.get('memory', '')[:200] + "..." if len(memory.get('memory', '')) > 200 else memory.get('memory', ''))
+                    st.write("---")
 
         st.rerun()
 

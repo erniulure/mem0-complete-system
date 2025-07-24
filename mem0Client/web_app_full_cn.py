@@ -24,8 +24,37 @@ from modern_chat_interface import modern_smart_chat_interface
 from auth_system import AuthSystem
 from api_patches import MemoryAPIPatched, SecurityUtils, apply_security_patches
 
+# 导入WebUI独立数据库
+try:
+    from database.webui_db_config import webui_db
+    WEBUI_DB_AVAILABLE = True
+except ImportError:
+    # 如果WebUI数据库模块不存在，使用原有的数据库配置
+    WEBUI_DB_AVAILABLE = False
+    webui_db = None
+
 # API基础配置 - 使用宿主机地址
 API_BASE_URL = os.getenv('MEM0_API_URL', 'http://localhost:8888')
+
+def get_webui_db_config():
+    """获取WebUI数据库配置 - 使用同一个PostgreSQL实例的webui数据库"""
+    return {
+        'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),  # 使用同一个PostgreSQL实例
+        'port': os.getenv('POSTGRES_PORT', '5432'),  # 使用同一个端口
+        'database': 'webui',  # 连接到webui数据库
+        'user': os.getenv('POSTGRES_USER', 'mem0'),  # 使用同一个用户
+        'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024')  # 使用同一个密码
+    }
+
+def get_mem0_db_config():
+    """获取Mem0数据库配置"""
+    return {
+        'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
+        'port': os.getenv('POSTGRES_PORT', '5432'),
+        'database': os.getenv('POSTGRES_DB', 'mem0'),  # 连接到mem0数据库
+        'user': os.getenv('POSTGRES_USER', 'mem0'),
+        'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024')
+    }
 
 # 页面配置
 st.set_page_config(
@@ -385,40 +414,115 @@ if 'api_settings' not in st.session_state:
         st.session_state.api_connected = False
         st.session_state.api_settings['connected'] = False
 
-# 初始化用户设置 - 从配置文件加载持久化设置
+# 初始化用户设置 - 从数据库加载持久化设置
 if 'user_settings' not in st.session_state:
+    # 默认设置
+    default_user_settings = {
+        'user_id': 'default_user',
+        'custom_instructions': '请提取并结构化重要信息，保持清晰明了。',
+        'includes': '',
+        'excludes': '',
+        'max_results': 10,
+        'infer': True
+    }
+
     try:
-        # 从配置文件加载保存的设置
-        config = st.session_state.get('config')
-        if config:
-            st.session_state.user_settings = {
-                'user_id': config.default_user_id,
-                'custom_instructions': config.advanced_custom_instructions,
-                'includes': config.advanced_includes or '技术文档, API',
-                'excludes': config.advanced_excludes or '个人信息',
-                'max_results': 10,
-                'infer': config.advanced_infer
-            }
+        # 获取当前用户信息
+        current_username = getattr(st.session_state, 'user_info', {}).get('username', 'admin')
+        current_user_id = getattr(st.session_state, 'user_info', {}).get('user_id', 'admin_default')
+        default_user_settings['user_id'] = current_user_id
+
+        # 使用WebUI独立数据库加载用户设置
+        if webui_db and WEBUI_DB_AVAILABLE:
+            # 从WebUI数据库加载设置
+            saved_settings_dict = webui_db.get_user_settings(current_username)
+
+            # 应用从数据库加载的设置
+            if 'custom_instructions' in saved_settings_dict:
+                default_user_settings['custom_instructions'] = saved_settings_dict['custom_instructions'] or default_user_settings['custom_instructions']
+
+            if 'include_content_types' in saved_settings_dict:
+                try:
+                    include_list = json.loads(saved_settings_dict['include_content_types']) if saved_settings_dict['include_content_types'] else []
+                    default_user_settings['includes'] = ', '.join(include_list) if include_list else ''
+                except (json.JSONDecodeError, TypeError):
+                    default_user_settings['includes'] = saved_settings_dict['include_content_types'] or ''
+
+            if 'exclude_content_types' in saved_settings_dict:
+                try:
+                    exclude_list = json.loads(saved_settings_dict['exclude_content_types']) if saved_settings_dict['exclude_content_types'] else []
+                    default_user_settings['excludes'] = ', '.join(exclude_list) if exclude_list else ''
+                except (json.JSONDecodeError, TypeError):
+                    default_user_settings['excludes'] = saved_settings_dict['exclude_content_types'] or ''
+
+            if 'max_results' in saved_settings_dict:
+                try:
+                    default_user_settings['max_results'] = int(saved_settings_dict['max_results']) if saved_settings_dict['max_results'] else 10
+                except (ValueError, TypeError):
+                    default_user_settings['max_results'] = 10
+
+            if 'smart_reasoning' in saved_settings_dict:
+                default_user_settings['infer'] = saved_settings_dict['smart_reasoning'].lower() == 'true' if saved_settings_dict['smart_reasoning'] else True
+
         else:
-            # 默认设置
-            st.session_state.user_settings = {
-                'user_id': 'default_user',
-                'custom_instructions': '',
-                'includes': '技术文档, API',
-                'excludes': '个人信息',
-                'max_results': 10,
-                'infer': True
-            }
+            # 回退到原有的mem0数据库（兼容性）
+            import psycopg2
+            import json
+
+            # 数据库连接配置
+            db_config = get_webui_db_config()
+
+            # 连接数据库并加载设置
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+
+            # 查询用户的高级设置
+            cursor.execute("""
+                SELECT setting_key, setting_value
+                FROM mem0_user_settings
+                WHERE user_id = %s AND setting_key IN (
+                    'custom_instructions', 'include_content_types', 'exclude_content_types',
+                    'max_results', 'smart_reasoning'
+                )
+            """, (current_user_id,))
+
+        saved_settings = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # 应用从数据库加载的设置
+        for setting_key, setting_value in saved_settings:
+            if setting_key == 'custom_instructions':
+                default_user_settings['custom_instructions'] = setting_value or default_user_settings['custom_instructions']
+            elif setting_key == 'include_content_types':
+                try:
+                    # 解析JSON数组并转换为逗号分隔的字符串
+                    include_list = json.loads(setting_value) if setting_value else []
+                    default_user_settings['includes'] = ', '.join(include_list) if include_list else ''
+                except (json.JSONDecodeError, TypeError):
+                    # 如果不是JSON格式，直接使用字符串值
+                    default_user_settings['includes'] = setting_value or ''
+            elif setting_key == 'exclude_content_types':
+                try:
+                    # 解析JSON数组并转换为逗号分隔的字符串
+                    exclude_list = json.loads(setting_value) if setting_value else []
+                    default_user_settings['excludes'] = ', '.join(exclude_list) if exclude_list else ''
+                except (json.JSONDecodeError, TypeError):
+                    # 如果不是JSON格式，直接使用字符串值
+                    default_user_settings['excludes'] = setting_value or ''
+            elif setting_key == 'max_results':
+                try:
+                    default_user_settings['max_results'] = int(setting_value) if setting_value else 10
+                except (ValueError, TypeError):
+                    default_user_settings['max_results'] = 10
+            elif setting_key == 'smart_reasoning':
+                default_user_settings['infer'] = setting_value.lower() == 'true' if setting_value else True
+
+        st.session_state.user_settings = default_user_settings
+
     except Exception as e:
-        # 如果加载失败，使用默认设置
-        st.session_state.user_settings = {
-            'user_id': 'default_user',
-            'custom_instructions': '',
-            'includes': '技术文档, API',
-            'excludes': '个人信息',
-            'max_results': 10,
-            'infer': True
-        }
+        # 如果数据库加载失败，使用默认设置
+        st.session_state.user_settings = default_user_settings
 
 # 初始化模型选择偏好
 if 'model_preferences' not in st.session_state:
@@ -675,53 +779,74 @@ def render_sidebar():
     with col1:
         if st.button("💾 保存设置", type="primary"):
             try:
-                import psycopg2
-                import json
-                import os
+                # 获取当前用户信息
+                current_username = getattr(st.session_state, 'user_info', {}).get('username', 'admin')
 
-                # 数据库连接配置
-                db_config = {
-                    'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
-                    'database': os.getenv('POSTGRES_DB', 'mem0'),
-                    'user': os.getenv('POSTGRES_USER', 'mem0'),
-                    'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024'),
-                    'port': 5432
-                }
+                if webui_db:
+                    # 使用WebUI独立数据库保存设置
+                    import json
 
-                # 获取当前用户ID
-                current_user_id = st.session_state.get('current_user_id', 'admin_default')
+                    settings_to_save = [
+                        ('custom_instructions', custom_instructions),
+                        ('include_content_types', json.dumps(includes.split(', ') if includes else [])),
+                        ('exclude_content_types', json.dumps(excludes.split(', ') if excludes else [])),
+                        ('max_results', str(max_results)),
+                        ('smart_reasoning', str(infer).lower())
+                    ]
 
-                # 连接数据库
-                conn = psycopg2.connect(**db_config)
-                cursor = conn.cursor()
+                    # 保存每个设置到WebUI数据库
+                    success_count = 0
+                    for setting_key, setting_value in settings_to_save:
+                        if webui_db.save_user_setting(current_username, setting_key, setting_value):
+                            success_count += 1
 
-                # 准备要保存的设置（从user_settings获取）
-                settings_to_save = [
-                    ('custom_instructions', st.session_state.user_settings.get('custom_instructions', '请提取并结构化重要信息，保持清晰明了。')),
-                    ('include_content_types', json.dumps(st.session_state.user_settings.get('includes', '技术文档, API').split(', '))),
-                    ('exclude_content_types', json.dumps(st.session_state.user_settings.get('excludes', '个人信息').split(', '))),
-                    ('max_results', str(st.session_state.user_settings.get('max_results', 21))),
-                    ('smart_reasoning', str(st.session_state.user_settings.get('infer', True)).lower()),
-                    ('system_initialized', 'true')
-                ]
+                    if success_count == len(settings_to_save):
+                        st.success("✅ 设置已保存到WebUI数据库！")
+                    else:
+                        st.warning(f"⚠️ 部分设置保存失败 ({success_count}/{len(settings_to_save)})")
 
-                # 保存每个设置
-                for setting_key, setting_value in settings_to_save:
-                    cursor.execute("""
-                        INSERT INTO mem0_user_settings (user_id, setting_key, setting_value, updated_at)
-                        VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
-                        ON CONFLICT (user_id, setting_key)
-                        DO UPDATE SET
-                            setting_value = EXCLUDED.setting_value,
-                            updated_at = CURRENT_TIMESTAMP
-                    """, (current_user_id, setting_key, setting_value))
+                else:
+                    # 回退到原有的mem0数据库（兼容性）
+                    import psycopg2
+                    import json
 
-                # 提交事务
-                conn.commit()
-                cursor.close()
-                conn.close()
+                    # 数据库连接配置
+                    db_config = get_webui_db_config()
 
-                st.success("✅ 设置已保存到数据库！")
+                    # 获取当前用户ID（从认证系统获取）
+                    current_user_id = getattr(st.session_state, 'user_info', {}).get('user_id', 'admin_default')
+
+                    # 连接数据库
+                    conn = psycopg2.connect(**db_config)
+                    cursor = conn.cursor()
+
+                    # 准备要保存的设置（从当前输入的值获取）
+                    settings_to_save = [
+                        ('custom_instructions', custom_instructions),
+                        ('include_content_types', json.dumps(includes.split(', ') if includes else [])),
+                        ('exclude_content_types', json.dumps(excludes.split(', ') if excludes else [])),
+                        ('max_results', str(max_results)),
+                        ('smart_reasoning', str(infer).lower()),
+                        ('system_initialized', 'true')
+                    ]
+
+                    # 保存每个设置
+                    for setting_key, setting_value in settings_to_save:
+                        cursor.execute("""
+                            INSERT INTO mem0_user_settings (user_id, setting_key, setting_value, updated_at)
+                            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                            ON CONFLICT (user_id, setting_key)
+                            DO UPDATE SET
+                                setting_value = EXCLUDED.setting_value,
+                                updated_at = CURRENT_TIMESTAMP
+                        """, (current_user_id, setting_key, setting_value))
+
+                    # 提交事务
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+
+                    st.success("✅ 设置已保存到数据库！")
 
             except Exception as e:
                 st.error(f"❌ 保存失败: {str(e)}")
@@ -2709,8 +2834,8 @@ def save_all_settings():
             'port': 5432
         }
 
-        # 获取当前用户ID
-        current_user_id = st.session_state.get('current_user_id', 'admin_default')
+        # 获取当前用户ID（从认证系统获取）
+        current_user_id = getattr(st.session_state, 'user_info', {}).get('user_id', 'admin_default')
 
         # 连接数据库
         conn = psycopg2.connect(**db_config)
