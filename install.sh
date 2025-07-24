@@ -98,7 +98,7 @@ install_docker_compose() {
 # 检查系统资源
 check_system_resources() {
     log_info "检查系统资源..."
-    
+
     # 检查内存
     local total_mem=$(free -m | awk 'NR==2{printf "%.0f", $2}')
     if [ "$total_mem" -lt 4096 ]; then
@@ -106,7 +106,7 @@ check_system_resources() {
     else
         log_success "系统内存充足: ${total_mem}MB"
     fi
-    
+
     # 检查磁盘空间
     local free_space=$(df -BG . | awk 'NR==2{print $4}' | sed 's/G//')
     if [ "$free_space" -lt 20 ]; then
@@ -116,10 +116,36 @@ check_system_resources() {
     fi
 }
 
+# 设置网络连接
+setup_network_connections() {
+    log_info "配置容器间网络连接..."
+
+    # 等待服务启动
+    sleep 5
+
+    # 检查并创建共享网络
+    if ! docker network ls | grep -q "mem0-shared-network"; then
+        docker network create mem0-shared-network 2>/dev/null || true
+        log_info "创建共享网络: mem0-shared-network"
+    fi
+
+    # 连接Gemini Balance到Mem0网络
+    docker network connect mem0-deployment_mem0-network gemini-balance 2>/dev/null || true
+    docker network connect gemini-balance_gemini-network mem0-api 2>/dev/null || true
+    docker network connect gemini-balance_gemini-network mem0-postgres 2>/dev/null || true
+    docker network connect gemini-balance_gemini-network mem0-qdrant 2>/dev/null || true
+
+    log_success "网络连接配置完成"
+}
+
 # 完整安装
 full_install() {
     log_step "开始完整安装..."
-    
+
+    # 0. 创建统一网络
+    log_info "创建统一Docker网络..."
+    docker network create mem0-unified-network 2>/dev/null || log_info "统一网络已存在"
+
     # 1. 安装Gemini-Balance
     log_info "安装Gemini-Balance AI服务..."
     cd gemini-balance
@@ -134,7 +160,7 @@ full_install() {
         log_warning "Gemini-Balance部署脚本不存在，跳过"
     fi
     cd ..
-    
+
     # 2. 安装Mem0系统
     log_info "安装Mem0核心系统..."
     cd mem0-deployment
@@ -145,7 +171,36 @@ full_install() {
         ./install.sh
     fi
     cd ..
-    
+
+    # 3. 网络已通过统一网络自动配置
+    log_success "统一网络配置完成"
+
+    # 4. 安装Web UI
+    log_info "安装Web用户界面..."
+    cd mem0Client
+
+    # 停止并删除旧容器
+    log_info "清理旧的Web UI容器..."
+    docker-compose down 2>/dev/null || true
+    docker rm -f mem0-webui 2>/dev/null || true
+
+    # 构建新容器
+    log_info "构建Web UI容器..."
+    docker-compose build --no-cache
+
+    # 启动服务
+    log_info "启动Web UI服务..."
+    docker-compose up -d
+
+    # 等待服务启动
+    log_info "等待Web UI服务启动..."
+    sleep 15
+
+    # 网络连接已通过统一网络自动配置
+    log_success "所有服务已连接到统一网络"
+
+    cd ..
+
     log_success "完整安装完成！"
 }
 
@@ -285,11 +340,29 @@ verify_installation() {
         all_services_ok=false
     fi
 
-    # 检查Web界面
-    if curl -s http://localhost:8503/ > /dev/null 2>&1; then
+    # 检查Web界面 - 增加重试机制
+    log_info "等待Web UI完全启动..."
+    local webui_ready=false
+    for i in {1..30}; do
+        if curl -s http://localhost:8503/ > /dev/null 2>&1; then
+            webui_ready=true
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$webui_ready" = true ]; then
         service_status+="✅ Web界面 (端口8503): 运行正常\n"
     else
         service_status+="❌ Web界面 (端口8503): 服务异常\n"
+        all_services_ok=false
+    fi
+
+    # 测试Web UI到Gemini Balance的连接
+    if docker exec mem0-webui curl -s -H "Authorization: Bearer q1q2q3q4" http://gemini-balance:8000/v1/models > /dev/null 2>&1; then
+        service_status+="✅ Web UI ↔ Gemini Balance: 网络连接正常\n"
+    else
+        service_status+="❌ Web UI ↔ Gemini Balance: 网络连接异常\n"
         all_services_ok=false
     fi
 
@@ -336,7 +409,20 @@ show_completion() {
 
     # 确保网络连接正常
     echo "🔗 配置服务网络连接..."
+
+    # 检查并创建共享网络
+    if ! docker network ls | grep -q "mem0-shared-network"; then
+        docker network create mem0-shared-network 2>/dev/null || true
+    fi
+
+    # 连接Gemini Balance到共享网络
+    docker network connect mem0-shared-network gemini-balance 2>/dev/null || true
     docker network connect mem0-deployment_mem0-network gemini-balance 2>/dev/null || true
+
+    # 连接Mem0服务到共享网络
+    docker network connect mem0-shared-network mem0-api 2>/dev/null || true
+    docker network connect mem0-shared-network mem0-postgres 2>/dev/null || true
+    docker network connect mem0-shared-network mem0-qdrant 2>/dev/null || true
 
     # 自动修复配置问题
     echo "🔧 自动修复配置..."

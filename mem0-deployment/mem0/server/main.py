@@ -87,6 +87,7 @@ class AddMemoryRequest(BaseModel):
     custom_instructions: Optional[str] = None
     includes: Optional[List[str]] = None
     excludes: Optional[List[str]] = None
+    model: Optional[str] = None  # 添加模型字段支持
 
 class SearchRequest(BaseModel):
     query: str
@@ -103,19 +104,24 @@ async def add_memory(request: AddMemoryRequest):
     try:
         messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
 
-        # 构建完整的参数字典
+        # 构建mem0支持的参数字典
         add_params = {
             "messages": messages,
             "user_id": request.user_id
         }
 
-        # 添加可选参数
+        # 将custom_instructions转换为prompt参数（mem0支持）
         if request.custom_instructions:
-            add_params["custom_instructions"] = request.custom_instructions
+            add_params["prompt"] = request.custom_instructions
+
+        # 将includes和excludes信息添加到metadata中（mem0支持）
+        metadata = {}
         if request.includes:
-            add_params["includes"] = request.includes
+            metadata["includes"] = request.includes
         if request.excludes:
-            add_params["excludes"] = request.excludes
+            metadata["excludes"] = request.excludes
+        if metadata:
+            add_params["metadata"] = metadata
 
         result = MEMORY_INSTANCE.add(**add_params)
         return {"results": result}

@@ -15,9 +15,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d
-    networks:
-      - shared-network
-      - mem0-network
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mem0} -d ${POSTGRES_DB:-mem0}"]
       interval: ${HEALTH_CHECK_INTERVAL:-30s}
@@ -35,8 +33,7 @@ services:
       - "${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    networks:
-      - mem0-network
+
     healthcheck:
       test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/6333' || exit 1"]
       interval: ${HEALTH_CHECK_INTERVAL:-30s}
@@ -68,8 +65,7 @@ services:
     depends_on:
       - mem0-postgres
       - mem0-qdrant
-    networks:
-      - mem0-network
+
 
   # Web界面服务
   mem0-webui:
@@ -116,9 +112,7 @@ services:
     depends_on:
       - mem0-api
       - mem0-postgres
-    networks:
-      - mem0-network
-      - shared-network
+
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8503')\" || exit 1"]
       interval: ${HEALTH_CHECK_INTERVAL:-30s}
@@ -132,19 +126,6 @@ volumes:
   mem0_data:
 
 networks:
-  # 创建一个共享网络，兼容所有服务
-  shared-network:
-    name: mem0-shared-network
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
-
-  # 保持兼容性，连接到现有网络
-  mem0-network:
-    driver: bridge
-
-  # 外部网络引用（如果存在）
-  gemini-balance_default:
+  default:
     external: true
-    # 如果网络不存在，会自动忽略
+    name: mem0-unified-network

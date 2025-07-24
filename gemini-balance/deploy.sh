@@ -179,7 +179,39 @@ configure_environment() {
     echo "本系统使用MySQL数据库（生产级配置）"
     # 强制使用MySQL，因为docker-compose.yml只支持MySQL
     sed -i "s/DATABASE_TYPE=.*/DATABASE_TYPE=mysql/" .env
-    log_info "已配置MySQL数据库"
+
+    # 确保MySQL配置存在
+    if ! grep -q "MYSQL_HOST" .env; then
+        echo "MYSQL_HOST=mysql" >> .env
+    else
+        sed -i "s/MYSQL_HOST=.*/MYSQL_HOST=mysql/" .env
+    fi
+
+    if ! grep -q "MYSQL_PORT" .env; then
+        echo "MYSQL_PORT=3306" >> .env
+    else
+        sed -i "s/MYSQL_PORT=.*/MYSQL_PORT=3306/" .env
+    fi
+
+    if ! grep -q "MYSQL_USER" .env; then
+        echo "MYSQL_USER=gemini" >> .env
+    else
+        sed -i "s/MYSQL_USER=.*/MYSQL_USER=gemini/" .env
+    fi
+
+    if ! grep -q "MYSQL_PASSWORD" .env; then
+        echo "MYSQL_PASSWORD=change_me" >> .env
+    else
+        sed -i "s/MYSQL_PASSWORD=.*/MYSQL_PASSWORD=change_me/" .env
+    fi
+
+    if ! grep -q "MYSQL_DATABASE" .env; then
+        echo "MYSQL_DATABASE=default_db" >> .env
+    else
+        sed -i "s/MYSQL_DATABASE=.*/MYSQL_DATABASE=default_db/" .env
+    fi
+
+    log_info "已配置MySQL数据库连接参数"
     
     echo "=============================================="
     log_success "环境配置完成"
@@ -202,16 +234,27 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # 确保MySQL配置正确传递
+      - DATABASE_TYPE=mysql
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=gemini
+      - MYSQL_PASSWORD=change_me
+      - MYSQL_DATABASE=default_db
     volumes:
       - ./data:/app/data
     depends_on:
-      - mysql
+      mysql:
+        condition: service_healthy
+    networks:
+      - gemini-network
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import requests; exit(0) if requests.get('http://localhost:8000/health').status_code == 200 else exit(1)\""]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   mysql:
     image: mysql:8.0
@@ -226,11 +269,18 @@ services:
       - mysql_data:/var/lib/mysql
     ports:
       - "3306:3306"
+    networks:
+      - gemini-network
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+
+networks:
+  gemini-network:
+    driver: bridge
 
 volumes:
   mysql_data:

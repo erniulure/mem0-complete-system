@@ -1,121 +1,44 @@
 version: '3.8'
 
 services:
-  # Mem0 API 服务
-  mem0-api:
-    image: mem0ai/mem0:latest
-    container_name: mem0-api
+  # Mem0 Web UI 服务
+  mem0-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mem0-webui
     ports:
-      - "8888:8000"
+      - "8503:8503"
     environment:
-      - MEM0_API_KEY=${MEM0_API_KEY:-local_api_key}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - POSTGRES_URL=${POSTGRES_URL:-postgresql://mem0:mem0password@postgres:5432/mem0db}
-    volumes:
-      - mem0_data:/app/data
-      - ./config/mem0:/app/config
-    depends_on:
-      - postgres
-      - qdrant
-    restart: unless-stopped
-    networks:
-      - mem0-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # PostgreSQL 数据库
-  postgres:
-    image: postgres:15-alpine
-    container_name: mem0-postgres
-    environment:
-      - POSTGRES_DB=mem0db
+      - STREAMLIT_SERVER_PORT=8503
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - POSTGRES_HOST=mem0-postgres
+      - POSTGRES_DB=mem0
       - POSTGRES_USER=mem0
-      - POSTGRES_PASSWORD=mem0password
+      - POSTGRES_PASSWORD=mem0_secure_password_2024
+      - POSTGRES_PORT=5432
+      - MEM0_API_URL=http://mem0-api:8000
+      - MEM0_API_KEY=${MEM0_API_KEY:-local_api_key}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./config/postgres:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # 挂载源码，支持实时调试
+      - .:/app
     restart: unless-stopped
-    networks:
-      - mem0-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mem0 -d mem0db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # Qdrant 向量数据库
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: mem0-qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    environment:
-      - QDRANT__SERVICE__HTTP_PORT=6333
-      - QDRANT__SERVICE__GRPC_PORT=6334
-    restart: unless-stopped
-    networks:
-      - mem0-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8503/"]
       interval: 30s
       timeout: 10s
       retries: 3
-
-  # Redis 缓存 (可选)
-  redis:
-    image: redis:7-alpine
-    container_name: mem0-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    restart: unless-stopped
-    networks:
-      - mem0-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  # Nginx 反向代理 (可选)
-  nginx:
-    image: nginx:alpine
-    container_name: mem0-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./config/nginx:/etc/nginx/conf.d
-      - ./ssl:/etc/nginx/ssl
-    depends_on:
-      - mem0-api
-    restart: unless-stopped
-    networks:
-      - mem0-network
 
 volumes:
-  mem0_data:
-    driver: local
-  postgres_data:
-    driver: local
-  qdrant_data:
-    driver: local
-  redis_data:
+  webui_data:
     driver: local
 
 networks:
-  mem0-network:
-    driver: bridge
+  default:
+    external: true
+    name: mem0-unified-network

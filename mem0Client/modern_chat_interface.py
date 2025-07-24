@@ -143,15 +143,32 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         # 更新学习状态
         st.session_state.learning_state = "active"
 
+        # 对话成功后自动更新连接状态
+        st.session_state.api_connected = True
+        if 'api_settings' in st.session_state:
+            st.session_state.api_settings['connected'] = True
+
         st.rerun()
 
     except requests.exceptions.Timeout:
+        # 对话失败时更新连接状态
+        st.session_state.api_connected = False
+        if 'api_settings' in st.session_state:
+            st.session_state.api_settings['connected'] = False
         st.error("⏰ 请求超时，请检查网络连接或稍后重试")
         st.info("💡 建议：检查AI服务是否正常运行")
     except requests.exceptions.ConnectionError:
+        # 对话失败时更新连接状态
+        st.session_state.api_connected = False
+        if 'api_settings' in st.session_state:
+            st.session_state.api_settings['connected'] = False
         st.error("🔌 无法连接到AI服务，请检查服务状态")
         st.info("💡 建议：确认gemini-balance服务正在运行")
     except Exception as e:
+        # 对话失败时更新连接状态
+        st.session_state.api_connected = False
+        if 'api_settings' in st.session_state:
+            st.session_state.api_settings['connected'] = False
         st.error(f"❌ 处理消息时出错: {str(e)}")
         st.info("💡 建议：\n1. 检查网络连接\n2. 确认AI服务正常运行\n3. 如问题持续，请联系管理员")
 

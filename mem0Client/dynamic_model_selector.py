@@ -284,13 +284,19 @@ class DynamicModelSelector:
             # 如果推荐的模型不可用，使用备用推荐
             recommendation = self._fallback_recommendation(user_query, has_image)
         
-        # 3. 添加额外信息
+        # 3. 添加额外信息和字段名标准化
         recommendation.update({
             "available_models": [model['id'] for model in self.available_models],
             "fast_model_used": self.fast_model,
             "selection_method": "dynamic_ai_recommendation"
         })
-        
+
+        # 确保字段名一致性 - 同时提供recommended_model和selected_model
+        if "recommended_model" in recommendation and "selected_model" not in recommendation:
+            recommendation["selected_model"] = recommendation["recommended_model"]
+        elif "selected_model" in recommendation and "recommended_model" not in recommendation:
+            recommendation["recommended_model"] = recommendation["selected_model"]
+
         return recommendation
     
     def get_available_models(self) -> List[str]:

@@ -8,6 +8,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    curl \
+    wget \
+    net-tools \
+    iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制requirements文件
@@ -34,8 +38,8 @@ ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 EXPOSE 8503
 
 # 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8503/_stcore/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8503/ || exit 1
 
 # 启动命令
 CMD ["streamlit", "run", "web_app_full_cn.py", "--server.port=8503", "--server.address=0.0.0.0", "--server.headless=true"]

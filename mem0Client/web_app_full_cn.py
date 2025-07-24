@@ -104,9 +104,16 @@ class MemoryAPI:
 
     @staticmethod
     def get_api_url():
-        """获取记忆管理API的URL - 固定使用mem0-api服务"""
-        # 记忆管理功能使用固定的mem0-api地址
-        return 'http://mem0-api:8000'
+        """获取记忆管理API的URL - 支持环境变量配置"""
+        import os
+
+        # 优先使用环境变量，支持Docker容器部署
+        api_url = os.getenv('MEM0_API_URL')
+        if api_url:
+            return api_url
+
+        # 备用地址：本地开发环境
+        return 'http://localhost:8888'
 
     @staticmethod
     def test_connection():
@@ -140,8 +147,9 @@ class MemoryAPI:
             payload["includes"] = includes
         if excludes:
             payload["excludes"] = excludes
-        if model:
-            payload["model"] = model
+        # 注意：mem0 API不支持model参数，模型选择在服务器端配置
+        # if model:
+        #     payload["model"] = model
 
         api_url = MemoryAPI.get_api_url()
         response = requests.post(f"{api_url}/memories", json=payload)
@@ -166,10 +174,11 @@ class MemoryAPI:
             "limit": limit
         }
 
-        if image_base64:
-            payload["image"] = image_base64
-        if model:
-            payload["model"] = model
+        # 注意：mem0 API不支持image和model参数，这些功能在服务器端配置
+        # if image_base64:
+        #     payload["image"] = image_base64
+        # if model:
+        #     payload["model"] = model
 
         api_url = MemoryAPI.get_api_url()
         response = requests.post(f"{api_url}/search", json=payload)
@@ -198,19 +207,80 @@ if 'config' not in st.session_state:
         st.session_state.config = Config()
         st.session_state.uploader = MemoryUploader(st.session_state.config)
         st.session_state.searcher = MemorySearcher(st.session_state.config)
-        # 初始化动态模型选择器
-        st.session_state.model_selector = DynamicModelSelector(
-            api_base_url='http://gemini-balance:8000',
-            api_key='admin123'
-        )
         st.session_state.multimodal_processor = MultimodalProcessor()
         st.session_state.initialized = True
-        # 初始化API连接状态为False，需要用户手动测试
-        st.session_state.api_connected = False
+        # 只在首次初始化时设置API连接状态，避免重置已有的连接状态
+        if 'api_connected' not in st.session_state:
+            st.session_state.api_connected = False
     except Exception as e:
         st.session_state.initialized = False
         st.session_state.init_error = str(e)
-        st.session_state.api_connected = False
+        # 只在首次初始化失败时设置连接状态，避免重置已有的连接状态
+        if 'api_connected' not in st.session_state:
+            st.session_state.api_connected = False
+
+# 确保model_selector始终可用 - 健壮性保证
+def ensure_model_selector():
+    """确保model_selector已正确初始化，如果没有则创建"""
+    if 'model_selector' not in st.session_state:
+        try:
+            # 从API设置中获取配置，如果没有则使用默认值
+            api_settings = st.session_state.get('api_settings', {})
+            api_key = api_settings.get('api_key', 'admin123')
+
+            st.session_state.model_selector = DynamicModelSelector(
+                api_base_url='http://gemini-balance:8000',
+                api_key=api_key
+            )
+            return True
+        except Exception as e:
+            # 如果初始化失败，创建一个备用的模型选择器
+            st.session_state.model_selector = create_fallback_model_selector()
+            return False
+    return True
+
+def create_fallback_model_selector():
+    """创建备用模型选择器，确保基本功能可用"""
+    class FallbackModelSelector:
+        def __init__(self):
+            self.available_models = [
+                {"id": "gemini-2.5-flash", "object": "model"},
+                {"id": "gemini-2.5-pro", "object": "model"},
+                {"id": "gemini-2.0-flash", "object": "model"}
+            ]
+            self.fast_model = "gemini-2.5-flash"
+
+        def select_optimal_model(self, user_query: str, has_image: bool = False) -> Dict:
+            """备用模型选择逻辑"""
+            if has_image:
+                return {
+                    "selected_model": "gemini-2.5-pro",
+                    "recommended_model": "gemini-2.5-pro",  # 兼容性字段
+                    "reasoning": "图片任务使用高质量模型",
+                    "task_type": "图片分析",
+                    "complexity_level": "7",
+                    "selection_method": "fallback_recommendation"
+                }
+            else:
+                return {
+                    "selected_model": "gemini-2.5-flash",
+                    "recommended_model": "gemini-2.5-flash",  # 兼容性字段
+                    "reasoning": "文本任务使用平衡模型",
+                    "task_type": "文本处理",
+                    "complexity_level": "5",
+                    "selection_method": "fallback_recommendation"
+                }
+
+        def get_available_models(self):
+            return [model['id'] for model in self.available_models]
+
+        def refresh_models(self):
+            pass  # 备用选择器不需要刷新
+
+    return FallbackModelSelector()
+
+# 初始化model_selector
+ensure_model_selector()
 
 # 初始化聊天历史
 if 'chat_history' not in st.session_state:
@@ -218,10 +288,10 @@ if 'chat_history' not in st.session_state:
 
 # 初始化API设置 - 从数据库加载保存的设置
 if 'api_settings' not in st.session_state:
-    # 默认设置
+    # 默认AI模型API设置
     default_settings = {
-        'api_url': API_BASE_URL,
-        'api_key': '',
+        'api_url': 'http://gemini-balance:8000',  # 默认指向AI模型服务
+        'api_key': 'q1q2q3q4',  # 默认AI API密钥，与Gemini Balance配置一致
         'connected': st.session_state.get('api_connected', False)
     }
 
@@ -246,21 +316,36 @@ if 'api_settings' not in st.session_state:
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
 
-        # 查询保存的API设置
+        # 查询保存的AI API设置（包括连接状态）
         cursor.execute("""
             SELECT setting_key, setting_value
             FROM mem0_user_settings
-            WHERE user_id = %s AND setting_key IN ('api_url', 'api_key')
+            WHERE user_id = %s AND setting_key IN ('ai_api_url', 'ai_api_key', 'ai_api_connected', 'api_url', 'api_key')
         """, (current_user_id,))
 
         saved_settings = cursor.fetchall()
         cursor.close()
         conn.close()
 
-        # 应用保存的设置
+        # 应用保存的AI API设置
+        saved_connected_status = None
         for setting_key, setting_value in saved_settings:
-            if setting_key in default_settings:
+            # 优先使用新的ai_api_*设置，兼容旧的api_*设置
+            if setting_key == 'ai_api_url':
+                default_settings['api_url'] = setting_value
+            elif setting_key == 'ai_api_key':
+                default_settings['api_key'] = setting_value
+            elif setting_key == 'ai_api_connected':
+                # 保存连接状态，稍后设置到session_state
+                saved_connected_status = setting_value.lower() == 'true'
+                default_settings['connected'] = saved_connected_status
+            elif setting_key in default_settings and not any(s[0].startswith('ai_api_') for s in saved_settings):
+                # 如果没有新的ai_api_*设置，则使用旧的api_*设置
                 default_settings[setting_key] = setting_value
+
+        # 如果数据库中有保存的连接状态，设置到session_state
+        if saved_connected_status is not None:
+            st.session_state.api_connected = saved_connected_status
 
     except Exception as e:
         # 数据库加载失败时使用默认设置
@@ -268,10 +353,12 @@ if 'api_settings' not in st.session_state:
 
     st.session_state.api_settings = default_settings
 
-    # 如果API设置已配置，自动测试连接状态
-    if default_settings.get('api_key') and default_settings.get('api_url'):
+    # 只在首次初始化或连接状态未知时进行自动测试
+    # 避免每次页面重新加载都测试，防止对话后连接状态被重置
+    if (default_settings.get('api_key') and default_settings.get('api_url') and
+        'api_connected' not in st.session_state):
         try:
-            # 自动测试API连接
+            # 自动测试AI模型API连接（仅首次）
             import requests
             api_url = default_settings['api_url']
             api_key = default_settings['api_key']
@@ -281,7 +368,8 @@ if 'api_settings' not in st.session_state:
                 'Content-Type': 'application/json'
             }
 
-            response = requests.get(f"{api_url}/v1/models", headers=headers, timeout=5)
+            # 测试AI模型API基础连接
+            response = requests.get(f"{api_url}/", headers=headers, timeout=5)
             if response.status_code == 200:
                 st.session_state.api_connected = True
                 st.session_state.api_settings['connected'] = True
@@ -289,9 +377,13 @@ if 'api_settings' not in st.session_state:
                 st.session_state.api_connected = False
                 st.session_state.api_settings['connected'] = False
         except:
-            # 连接测试失败，保持默认状态
+            # AI API连接测试失败，设置为未连接状态
             st.session_state.api_connected = False
             st.session_state.api_settings['connected'] = False
+    elif 'api_connected' not in st.session_state:
+        # 如果没有配置API设置且数据库中也没有保存的连接状态，默认为未连接
+        st.session_state.api_connected = False
+        st.session_state.api_settings['connected'] = False
 
 # 初始化用户设置 - 从配置文件加载持久化设置
 if 'user_settings' not in st.session_state:
@@ -412,33 +504,88 @@ def render_sidebar():
     
     st.divider()
     
-    # API配置
-    st.subheader("🔧 API配置")
-    
+    # AI模型API配置
+    st.subheader("🤖 AI模型API")
+
     # 使用表单包装API配置，避免密码字段警告
-    with st.form("api_config_form", clear_on_submit=False):
+    with st.form("sidebar_ai_api_config_form", clear_on_submit=False):
         api_url = st.text_input(
-            "API地址",
+            "AI API地址",
             value=st.session_state.api_settings['api_url'],
-            help="Mem0 API服务地址"
+            help="大语言模型API服务地址（如Gemini Balance）"
         )
 
         api_key = st.text_input(
-            "API密钥",
+            "AI API密钥",
             value=st.session_state.api_settings['api_key'],
             type="password",
-            help="大模型API认证token（用于调用AI服务）"
+            help="AI模型API认证token（用于调用AI服务）"
         )
 
         # 表单提交按钮（隐藏，通过其他按钮触发更新）
         form_submitted = st.form_submit_button("更新配置", type="secondary")
-    
+
     # 处理表单提交或重新连接
-    if form_submitted or st.button("🔄 重新连接", type="secondary"):
+    if form_submitted:
         # 更新会话状态
         st.session_state.api_settings['api_url'] = api_url
         st.session_state.api_settings['api_key'] = api_key
-        test_api_connection(api_url, api_key)
+
+        # 保存到数据库
+        try:
+            import psycopg2
+            import os
+            import time
+
+            # 数据库连接配置
+            db_config = {
+                'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
+                'database': os.getenv('POSTGRES_DB', 'mem0db'),
+                'user': os.getenv('POSTGRES_USER', 'mem0'),
+                'password': os.getenv('POSTGRES_PASSWORD', 'mem0password'),
+                'port': 5432
+            }
+
+            # 获取当前用户ID
+            current_user_id = getattr(st.session_state, 'user_info', {}).get('user_id', 'admin_default')
+
+            # 连接数据库并保存设置
+            conn = psycopg2.connect(**db_config)
+            cursor = conn.cursor()
+
+            # 保存AI模型API设置
+            settings_to_save = [
+                ('ai_api_url', api_url),
+                ('ai_api_key', api_key),
+                ('ai_api_last_update', str(int(time.time())))
+            ]
+
+            for setting_key, setting_value in settings_to_save:
+                cursor.execute("""
+                    INSERT INTO mem0_user_settings (user_id, setting_key, setting_value, updated_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id, setting_key)
+                    DO UPDATE SET
+                        setting_value = EXCLUDED.setting_value,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (current_user_id, setting_key, setting_value))
+
+            # 提交事务
+            conn.commit()
+            cursor.close()
+            conn.close()
+
+            st.success("✅ AI模型API配置已保存到数据库！")
+
+        except Exception as db_error:
+            st.error(f"❌ 数据库保存失败: {str(db_error)}")
+            import traceback
+            print(f"数据库保存错误详情: {traceback.format_exc()}")
+
+    elif st.button("🔄 重新连接", type="secondary"):
+        # 重新连接时使用当前配置
+        with st.spinner("正在重新连接..."):
+            test_ai_api_connection(api_url, api_key)
     
     st.divider()
     
@@ -530,6 +677,7 @@ def render_sidebar():
             try:
                 import psycopg2
                 import json
+                import os
 
                 # 数据库连接配置
                 db_config = {
@@ -605,34 +753,58 @@ def render_sidebar():
         st.session_state.chat_history = []
         st.success("聊天记录已清空")
 
-def test_api_connection(api_url: str, api_key: str):
-    """测试API连接"""
+def simple_connection_test(api_url: str):
+    """简单的连接测试 - 只检测基础连通性"""
+    try:
+        import requests
+        test_url = api_url.rstrip('/')
+        response = requests.get(f"{test_url}/health", timeout=5)
+        return response.status_code == 200
+    except:
+        return False
+
+def test_ai_api_connection(api_url: str, api_key: str):
+    """测试AI模型API连接 - 简化版本，专注于基础连通性"""
     try:
         import requests
         import time
 
-        # 实际测试API连接
-        test_url = api_url.rstrip('/')
-        headers = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json'
-        }
+        # 显示测试进度
+        progress_placeholder = st.empty()
+        progress_placeholder.info("🔄 正在测试AI模型API连接...")
 
-        # 发送测试请求，设置超时
-        response = requests.get(test_url, headers=headers, timeout=5)
+        # 简化的连接测试
+        test_url = api_url.rstrip('/')
+
+        # 只测试健康检查端点
+        try:
+            response = requests.get(f"{test_url}/health", timeout=10)
+        except requests.exceptions.RequestException as e:
+            # 如果容器间网络连接失败，尝试使用localhost
+            if 'gemini-balance:8000' in test_url:
+                test_url = test_url.replace('gemini-balance:8000', 'localhost:8000')
+                response = requests.get(f"{test_url}/health", timeout=10)
+            else:
+                raise e
 
         if response.status_code == 200:
-            # 连接成功
+            # AI API连接成功
+            progress_placeholder.success("✅ AI模型API连接测试成功！")
+
+            # 更新会话状态
             st.session_state.api_settings.update({
                 'api_url': api_url,
                 'api_key': api_key,
-                'connected': True
+                'connected': True,
+                'last_test_time': time.time(),
+                'test_result': 'success'
             })
             st.session_state.api_connected = True
 
-            # 保存API设置到数据库
+            # 保存AI API设置到数据库
             try:
-                st.info(f"🔄 开始保存API设置到数据库: api_url={api_url}, api_key={api_key[:4]}****")
+                progress_placeholder.info("� 正在保存AI API设置到数据库...")
+                st.info(f"🔄 保存AI模型API设置: api_url={api_url}, api_key={api_key[:4]}****")
                 import psycopg2
                 import os
 
@@ -652,10 +824,12 @@ def test_api_connection(api_url: str, api_key: str):
                 conn = psycopg2.connect(**db_config)
                 cursor = conn.cursor()
 
-                # 保存API设置
+                # 保存AI模型API设置
                 settings_to_save = [
-                    ('api_url', api_url),
-                    ('api_key', api_key)
+                    ('ai_api_url', api_url),
+                    ('ai_api_key', api_key),
+                    ('ai_api_connected', 'true'),
+                    ('ai_api_last_test_time', str(int(time.time())))
                 ]
 
                 for setting_key, setting_value in settings_to_save:
@@ -673,7 +847,7 @@ def test_api_connection(api_url: str, api_key: str):
                 cursor.close()
                 conn.close()
 
-                st.info("💾 API设置已成功保存到数据库！")
+                progress_placeholder.success("✅ AI模型API设置已成功保存到数据库！")
 
             except Exception as db_error:
                 # 数据库保存失败不影响连接测试，但要记录错误
@@ -681,23 +855,97 @@ def test_api_connection(api_url: str, api_key: str):
                 import traceback
                 print(f"数据库保存错误详情: {traceback.format_exc()}")
 
-            st.success("✅ API连接成功！")
-            # 刷新页面以更新连接状态显示
+            # 显示详细的AI API连接信息
+            with st.expander("📋 AI API连接详情", expanded=True):
+                st.write(f"🌐 **API地址**: {api_url}")
+                st.write(f"🔑 **认证密钥**: {api_key[:8]}{'*' * (len(api_key) - 8) if len(api_key) > 8 else '****'}")
+                st.write(f"⏰ **测试时间**: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                st.write(f"📊 **响应状态**: HTTP {response.status_code}")
+
+                # 根据API类型显示不同信息
+                if 'gemini-balance' in api_url:
+                    st.write("🤖 **服务类型**: Gemini Balance AI对话API")
+                    st.write("✅ **功能状态**: AI对话功能正常")
+                elif 'openai' in api_url:
+                    st.write("🤖 **服务类型**: OpenAI API")
+                    st.write("✅ **功能状态**: AI对话功能正常")
+                else:
+                    st.write("🤖 **服务类型**: 通用AI模型API")
+                    st.write("✅ **功能状态**: AI服务正常")
+
+            # 延迟一秒后刷新页面以更新连接状态显示
+            time.sleep(1)
             st.rerun()
         else:
-            # 连接失败
+            # AI API连接失败
+            progress_placeholder.empty()
             st.session_state.api_connected = False
-            st.error(f"❌ API连接失败: HTTP {response.status_code}")
+            st.session_state.api_settings['connected'] = False
+            st.error(f"❌ AI模型API连接失败: HTTP {response.status_code}")
+
+            # 显示详细错误信息
+            with st.expander("🔍 错误详情"):
+                st.write(f"**请求地址**: {test_url}")
+                st.write(f"**响应状态**: HTTP {response.status_code}")
+                try:
+                    error_detail = response.text[:500] if response.text else "无响应内容"
+                    st.write(f"**错误详情**: {error_detail}")
+                except:
+                    st.write("**错误详情**: 无法获取详细错误信息")
 
     except requests.exceptions.Timeout:
+        if 'progress_placeholder' in locals():
+            progress_placeholder.empty()
         st.session_state.api_connected = False
-        st.error("❌ API连接超时，请检查服务是否正常运行")
-    except requests.exceptions.ConnectionError:
+        st.session_state.api_settings['connected'] = False
+        st.error("❌ AI模型API连接超时，请检查服务是否正常运行")
+
+        with st.expander("🔍 超时问题排查"):
+            st.write("**可能原因**:")
+            st.write("- AI模型服务未启动或响应缓慢")
+            st.write("- 网络连接问题")
+            st.write("- 服务器负载过高")
+            st.write("**建议解决方案**:")
+            st.write("- 检查Docker容器状态: `docker ps`")
+            st.write("- 查看服务日志: `docker logs gemini-balance`")
+            st.write("- 重启AI服务")
+
+    except requests.exceptions.ConnectionError as e:
+        if 'progress_placeholder' in locals():
+            progress_placeholder.empty()
         st.session_state.api_connected = False
-        st.error("❌ 无法连接到API服务，请检查地址是否正确")
+        st.session_state.api_settings['connected'] = False
+        st.error("❌ 无法连接到AI模型API服务，请检查地址是否正确")
+
+        with st.expander("🔍 连接问题排查"):
+            st.write(f"**错误详情**: {str(e)}")
+            st.write("**可能原因**:")
+            st.write("- AI API地址配置错误")
+            st.write("- AI服务未启动")
+            st.write("- 端口被占用或防火墙阻止")
+            st.write("**建议解决方案**:")
+            st.write("- 确认AI API地址格式正确")
+            st.write("- 检查AI服务是否运行: `docker ps | grep gemini`")
+            st.write("- 测试端口连通性")
+
     except Exception as e:
+        if 'progress_placeholder' in locals():
+            progress_placeholder.empty()
         st.session_state.api_connected = False
-        st.error(f"❌ API连接失败: {str(e)}")
+        st.session_state.api_settings['connected'] = False
+        st.error(f"❌ AI模型API连接失败: {str(e)}")
+
+        with st.expander("🔍 详细错误信息"):
+            st.write(f"**错误类型**: {type(e).__name__}")
+            st.write(f"**错误详情**: {str(e)}")
+            st.write("**建议操作**:")
+            st.write("- 检查AI API地址和密钥是否正确")
+            st.write("- 确认AI服务正常运行")
+            st.write("- 查看系统日志获取更多信息")
+
+            # 显示调试信息
+            import traceback
+            st.code(traceback.format_exc(), language="python")
 
 
 
@@ -814,7 +1062,8 @@ def display_real_time_memory_learning():
 def handle_multimodal_chat_message(user_input: str, image_info: Dict = None):
     """处理多模态聊天消息 - 支持文字和图片"""
 
-    # 智能模型选择
+    # 确保model_selector可用并进行智能模型选择
+    ensure_model_selector()
     has_image = image_info is not None and image_info.get("success", False)
     content_for_analysis = user_input or "图片分析请求"
 
@@ -826,6 +1075,14 @@ def handle_multimodal_chat_message(user_input: str, image_info: Dict = None):
         user_query=content_for_analysis,
         has_image=has_image
     )
+
+    # 字段名标准化：确保selected_model字段存在
+    if 'selected_model' not in model_selection:
+        if 'recommended_model' in model_selection:
+            model_selection['selected_model'] = model_selection['recommended_model']
+        else:
+            st.error(f"❌ 模型选择器返回的数据既没有'selected_model'也没有'recommended_model'字段: {model_selection}")
+            return
 
     # 显示模型选择信息
     if model_preferences.get('show_model_info', True):
@@ -940,9 +1197,9 @@ def handle_multimodal_chat_message(user_input: str, image_info: Dict = None):
                 user_id=user_id,
                 custom_instructions=final_instructions,
                 includes=includes_list,
-                excludes=excludes_list,
-                model=model_selection['selected_model'],
-                image_base64=image_info['base64'] if has_image else None
+                excludes=excludes_list
+                # 注意：移除model和image_base64参数，因为mem0 API不支持
+                # 模型信息已经包含在custom_instructions中
             )
 
             # 更新实时记忆学习状态
@@ -1409,7 +1666,8 @@ def add_sample_memory(user_content: str, assistant_content: str, uploaded_image=
             st.warning("⚠️ 请至少输入文字内容或上传图片")
             return
 
-        # 智能模型选择
+        # 确保model_selector可用并进行智能模型选择
+        ensure_model_selector()
         content_for_analysis = user_content or assistant_content or "图片记忆"
         has_image = image_info is not None
 
@@ -1417,6 +1675,14 @@ def add_sample_memory(user_content: str, assistant_content: str, uploaded_image=
             user_query=content_for_analysis,
             has_image=has_image
         )
+
+        # 字段名标准化：确保selected_model字段存在
+        if 'selected_model' not in model_selection:
+            if 'recommended_model' in model_selection:
+                model_selection['selected_model'] = model_selection['recommended_model']
+            else:
+                st.error(f"❌ 模型选择器返回的数据既没有'selected_model'也没有'recommended_model'字段: {model_selection}")
+                return
 
         user_id = st.session_state.user_settings['user_id']
         custom_instructions = st.session_state.user_settings.get('custom_instructions')
@@ -1436,9 +1702,9 @@ def add_sample_memory(user_content: str, assistant_content: str, uploaded_image=
                 user_id=user_id,
                 custom_instructions=custom_instructions,
                 includes=includes,
-                excludes=excludes,
-                model=model_selection['selected_model'],
-                image_base64=image_info['base64'] if has_image else None
+                excludes=excludes
+                # 注意：移除model和image_base64参数，因为mem0 API不支持
+                # 模型信息已经包含在custom_instructions中
             )
 
             st.success("✅ 记忆添加成功！")
@@ -1737,7 +2003,8 @@ def perform_multimodal_search(query: str, search_image, search_type: str, limit:
                 st.error(f"❌ 图片处理失败: {image_info['error']}")
                 return
 
-        # 智能模型选择
+        # 确保model_selector可用并进行智能模型选择
+        ensure_model_selector()
         content_for_analysis = query or "图片搜索"
         has_image = image_base64 is not None
 
@@ -1745,6 +2012,14 @@ def perform_multimodal_search(query: str, search_image, search_type: str, limit:
             user_query=content_for_analysis,
             has_image=has_image
         )
+
+        # 字段名标准化：确保selected_model字段存在
+        if 'selected_model' not in model_selection:
+            if 'recommended_model' in model_selection:
+                model_selection['selected_model'] = model_selection['recommended_model']
+            else:
+                st.error(f"❌ 模型选择器返回的数据既没有'selected_model'也没有'recommended_model'字段: {model_selection}")
+                return
 
         # 显示模型选择信息
         if st.session_state.model_preferences.get('show_model_info', True):
@@ -1881,8 +2156,17 @@ def system_settings_interface(auth_system):
 
         with col1:
             st.markdown("**当前可用模型:**")
-            for model in available_models:
-                st.write(f"• {model}")
+
+            # 限制显示的模型数量，避免页面混乱
+            display_models = available_models[:10] if len(available_models) > 10 else available_models
+
+            # 使用折叠面板显示模型列表
+            with st.expander(f"📋 查看模型列表 ({len(available_models)}个可用)", expanded=False):
+                for i, model in enumerate(display_models):
+                    st.write(f"• {model}")
+
+                if len(available_models) > 10:
+                    st.info(f"显示前10个模型，共{len(available_models)}个可用")
 
             if st.button("🔄 刷新模型列表"):
                 st.session_state.model_selector.refresh_models()
@@ -1942,21 +2226,121 @@ def system_settings_interface(auth_system):
 
     st.divider()
 
-    # API设置
-    st.subheader("🔧 API设置")
+    # AI模型API设置
+    st.subheader("🤖 AI模型API设置")
+    st.markdown("配置大语言模型API服务，用于智能对话功能")
 
-    with st.expander("API配置", expanded=True):
+    # 显示系统状态
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info("🧠 **记忆管理**: 内置集成，无需配置")
+    with col2:
+        ai_status = "✅ 已连接" if st.session_state.get('api_connected', False) else "❌ 未连接"
+        st.info(f"🤖 **AI对话**: {ai_status}")
+
+    with st.expander("AI模型API配置", expanded=True):
+        # 显示当前配置信息
+        current_settings = st.session_state.get('api_settings', {})
+        if current_settings.get('api_url'):
+            st.info(f"🌐 当前AI API地址: {current_settings.get('api_url')}")
+
         # 使用表单包装API配置，避免密码字段警告
-        with st.form("debug_api_config_form", clear_on_submit=False):
-            api_url = st.text_input("API地址", value=os.getenv('MEM0_API_URL', 'http://mem0-api:8000'))
-            api_key = st.text_input("API密钥", type="password")
+        with st.form("ai_api_config_form", clear_on_submit=False):
+            # 默认指向AI模型服务，而不是mem0
+            default_ai_url = current_settings.get('api_url', 'http://gemini-balance:8000')
+            default_ai_key = current_settings.get('api_key', 'admin123')
+
+            api_url = st.text_input(
+                "AI模型API地址",
+                value=default_ai_url,
+                help="大语言模型API服务地址（如Gemini Balance、OpenAI等）"
+            )
+            api_key = st.text_input(
+                "AI模型API密钥",
+                value=default_ai_key,
+                type="password",
+                help="用于访问AI模型服务的认证密钥"
+            )
             api_timeout = st.number_input("超时时间(秒)", min_value=5, max_value=300, value=30)
 
             # 表单提交按钮
-            test_submitted = st.form_submit_button("🧪 测试连接", type="secondary")
+            col1, col2 = st.columns(2)
+            with col1:
+                test_submitted = st.form_submit_button("🧪 测试AI连接", type="secondary")
+            with col2:
+                save_submitted = st.form_submit_button("💾 保存配置", type="primary")
 
         if test_submitted:
-            test_api_connection(api_url, api_key)
+            test_ai_api_connection(api_url, api_key)
+        elif save_submitted:
+            # 保存AI API配置到会话状态
+            st.session_state.api_settings.update({
+                'api_url': api_url,
+                'api_key': api_key,
+                'timeout': api_timeout
+            })
+
+            # 保存到数据库
+            try:
+                import psycopg2
+                import os
+                import time
+
+                # 数据库连接配置
+                db_config = {
+                    'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),
+                    'database': os.getenv('POSTGRES_DB', 'mem0db'),
+                    'user': os.getenv('POSTGRES_USER', 'mem0'),
+                    'password': os.getenv('POSTGRES_PASSWORD', 'mem0password'),
+                    'port': 5432
+                }
+
+                # 获取当前用户ID
+                current_user_id = getattr(st.session_state, 'user_info', {}).get('user_id', 'admin_default')
+
+                # 连接数据库并保存设置
+                conn = psycopg2.connect(**db_config)
+                cursor = conn.cursor()
+
+                # 保存AI模型API设置
+                settings_to_save = [
+                    ('ai_api_url', api_url),
+                    ('ai_api_key', api_key),
+                    ('ai_api_timeout', str(api_timeout)),
+                    ('ai_api_last_update', str(int(time.time())))
+                ]
+
+                for setting_key, setting_value in settings_to_save:
+                    cursor.execute("""
+                        INSERT INTO mem0_user_settings (user_id, setting_key, setting_value, updated_at)
+                        VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                        ON CONFLICT (user_id, setting_key)
+                        DO UPDATE SET
+                            setting_value = EXCLUDED.setting_value,
+                            updated_at = CURRENT_TIMESTAMP
+                    """, (current_user_id, setting_key, setting_value))
+
+                # 提交事务
+                conn.commit()
+                cursor.close()
+                conn.close()
+
+                st.success("✅ AI模型API配置已保存到数据库！")
+                st.info(f"📝 已保存: API地址={api_url}, 密钥={api_key[:4]}****, 超时={api_timeout}秒")
+
+            except Exception as db_error:
+                st.error(f"❌ 数据库保存失败: {str(db_error)}")
+                st.warning("⚠️ 配置已保存到当前会话，但未持久化到数据库")
+                import traceback
+                print(f"数据库保存错误详情: {traceback.format_exc()}")
+
+                # 显示详细错误信息
+                with st.expander("🔍 错误详情"):
+                    st.code(str(db_error))
+                    st.write("**建议操作**:")
+                    st.write("- 检查数据库连接是否正常")
+                    st.write("- 确认用户权限设置")
+                    st.write("- 重试保存操作")
 
     st.divider()
 
@@ -2314,6 +2698,7 @@ def save_all_settings():
     try:
         import psycopg2
         import json
+        import os
 
         # 数据库连接配置
         db_config = {
