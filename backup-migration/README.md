@@ -17,6 +17,7 @@
 ### 核心数据
 - 🗃️ **Qdrant向量数据库**: 所有collections和向量数据
 - 🗄️ **PostgreSQL数据库**: 用户数据、权限和配置
+- 🕸️ **Neo4j图数据库**: 实体关系图、记忆关联和图结构数据
 - ⚙️ **配置文件**: mem0-config.yaml、docker-compose.yml等
 - 🌍 **环境变量**: Docker环境变量和系统配置
 
@@ -127,6 +128,31 @@ scp backup-20241224-143022.tar.gz user@new-server:/opt/mem0-complete-system/
     --debug             启用调试模式
 ```
 
+### Neo4j管理工具 (neo4j-manager.sh)
+
+专门用于Neo4j图数据库的管理和维护：
+
+```bash
+用法: ./neo4j-manager.sh <命令> [选项]
+
+命令:
+    status      显示Neo4j状态和数据统计
+    backup      备份Neo4j数据到指定路径
+    restore     从指定路径恢复Neo4j数据
+    reset       重置Neo4j数据库（删除所有数据）
+    stats       显示详细的数据统计信息
+    query       执行Cypher查询
+    browser     显示Neo4j Browser访问信息
+    logs        查看Neo4j容器日志
+
+示例:
+    ./neo4j-manager.sh status                    # 查看状态
+    ./neo4j-manager.sh backup /tmp/neo4j-backup  # 备份数据
+    ./neo4j-manager.sh restore /tmp/neo4j-backup # 恢复数据
+    ./neo4j-manager.sh query "MATCH (n) RETURN count(n)"  # 执行查询
+    ./neo4j-manager.sh browser                   # 获取Browser访问信息
+```
+
 ## 🔧 高级功能
 
 ### 自动化备份
@@ -168,6 +194,46 @@ for backup in backups/*.tar.gz; do
 done
 ```
 
+### Neo4j图数据库管理
+
+```bash
+# 查看Neo4j状态和数据统计
+./neo4j-manager.sh status
+
+# 备份Neo4j图数据
+./neo4j-manager.sh backup /backup/neo4j-$(date +%Y%m%d)
+
+# 查询记忆实体关系
+./neo4j-manager.sh query "MATCH (u:User)-[:HAS_MEMORY]->(m:Memory) RETURN u.name, count(m) as memory_count"
+
+# 查看图数据统计
+./neo4j-manager.sh stats
+
+# 访问Neo4j Browser进行可视化查询
+./neo4j-manager.sh browser
+```
+
+### 图数据库查询示例
+
+```cypher
+// 查找用户的所有记忆
+MATCH (u:User {user_id: 'admin'})-[:HAS_MEMORY]->(m:Memory)
+RETURN m.content, m.created_at
+ORDER BY m.created_at DESC
+
+// 查找实体的所有关系
+MATCH (e:Entity {name: '刘昶'})-[r]-(related)
+RETURN e, r, related
+
+// 查找相似记忆
+MATCH (m1:Memory)-[:SIMILAR_TO]-(m2:Memory)
+WHERE m1.user_id = 'admin'
+RETURN m1.content, m2.content, m1.similarity_score
+
+// 查看图数据库统计
+CALL apoc.meta.stats()
+```
+
 ## 📁 文件结构
 
 ```
@@ -177,6 +243,9 @@ backup-migration/
 ├── validate.sh            # 系统验证脚本
 ├── backup-utils.sh        # 备份工具函数
 ├── restore-utils.sh       # 恢复工具函数
+├── simple-backup.sh       # 简单备份脚本
+├── simple-restore.sh      # 简单恢复脚本
+├── neo4j-manager.sh       # Neo4j专用管理工具
 ├── README.md              # 使用说明
 └── backups/               # 备份文件目录
     ├── backup-20241224-143022.tar.gz
@@ -190,12 +259,17 @@ backup-migration/
 backup-YYYYMMDD-HHMMSS.tar.gz
 ├── metadata.json          # 备份元数据
 ├── checksums.md5          # 文件校验和
-├── qdrant/                # Qdrant数据
+├── qdrant/                # Qdrant向量数据
 │   ├── collection1.snapshot
 │   └── collection2.snapshot
 ├── postgres/              # PostgreSQL数据
 │   ├── mem0_users.sql
 │   └── roles.sql
+├── neo4j/                 # Neo4j图数据
+│   ├── graph.dump         # 图数据库转储
+│   ├── nodes.csv          # 节点数据
+│   ├── relationships.csv  # 关系数据
+│   └── indexes.cypher     # 索引和约束
 ├── configs/               # 配置文件
 │   ├── configs_mem0-config.yaml
 │   ├── mem0-deployment_docker-compose.yml
@@ -206,6 +280,7 @@ backup-YYYYMMDD-HHMMSS.tar.gz
 └── logs/                  # 日志文件（可选）
     ├── mem0-api.log
     ├── mem0-qdrant.log
+    ├── mem0-neo4j.log
     └── backup.log
 ```
 
@@ -253,6 +328,7 @@ tail -f backups/backup.log
 docker logs mem0-api
 docker logs mem0-qdrant
 docker logs mem0-postgres
+docker logs mem0-neo4j
 ```
 
 ### 手动清理

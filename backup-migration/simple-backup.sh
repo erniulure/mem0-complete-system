@@ -42,7 +42,7 @@ error() {
 # 创建备份目录
 create_backup_dir() {
     info "创建备份目录: $BACKUP_PATH"
-    mkdir -p "$BACKUP_PATH"/{qdrant,postgres,configs}
+    mkdir -p "$BACKUP_PATH"/{qdrant,postgres,neo4j,configs}
 }
 
 # 备份Qdrant数据
@@ -104,6 +104,38 @@ backup_postgres() {
     docker exec mem0-postgres pg_dumpall -U mem0 --roles-only > "$BACKUP_PATH/postgres/roles.sql" 2>/dev/null || true
 }
 
+# 备份Neo4j数据
+backup_neo4j() {
+    info "备份Neo4j图数据库..."
+
+    # 检查Neo4j是否运行
+    if ! docker ps | grep -q "mem0-neo4j"; then
+        warn "Neo4j容器未运行，跳过备份"
+        return 0
+    fi
+
+    # 检查连接
+    if ! docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+        warn "无法连接到Neo4j，跳过备份"
+        return 0
+    fi
+
+    # 导出图数据
+    if docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    CALL apoc.export.csv.all('/tmp/neo4j-export.csv', {})
+    " >/dev/null 2>&1; then
+        docker cp mem0-neo4j:/tmp/neo4j-export.csv "$BACKUP_PATH/neo4j/" 2>/dev/null || true
+        success "Neo4j数据导出完成"
+    else
+        warn "Neo4j数据导出失败"
+    fi
+
+    # 导出索引信息
+    docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties
+    " > "$BACKUP_PATH/neo4j/indexes.cypher" 2>/dev/null || true
+}
+
 # 备份配置文件
 backup_configs() {
     info "备份配置文件..."
@@ -140,6 +172,7 @@ Mem0 系统备份信息
 备份内容:
 - Qdrant向量数据库
 - PostgreSQL数据库 (mem0, webui)
+- Neo4j图数据库
 - 配置文件
 
 恢复说明:
@@ -197,6 +230,7 @@ main() {
     create_backup_dir
     backup_qdrant
     backup_postgres
+    backup_neo4j
     backup_configs
     generate_backup_info
     

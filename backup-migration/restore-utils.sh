@@ -438,6 +438,149 @@ verify_restore_result() {
     else
         warn "配置文件: mem0-config.yaml未找到"
     fi
-    
+
     return 0
+}
+
+# =============================================================================
+# Neo4j 图数据库恢复函数
+# =============================================================================
+
+# 恢复Neo4j图数据库
+restore_neo4j() {
+    local restore_dir="$1"
+    local neo4j_dir="$restore_dir/neo4j"
+
+    info "恢复Neo4j图数据库..."
+
+    if [[ ! -d "$neo4j_dir" ]]; then
+        warn "未找到Neo4j备份数据，跳过恢复"
+        return 0
+    fi
+
+    # 检查Neo4j容器是否运行
+    if ! docker ps | grep -q "mem0-neo4j"; then
+        warn "Neo4j容器未运行，跳过Neo4j恢复"
+        return 0
+    fi
+
+    # 等待Neo4j服务启动
+    info "等待Neo4j服务启动..."
+    local max_attempts=60
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        if docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+            success "Neo4j服务已启动"
+            break
+        fi
+
+        attempt=$((attempt + 1))
+        echo -n "."
+        sleep 2
+    done
+
+    if [ $attempt -eq $max_attempts ]; then
+        error "Neo4j服务启动超时"
+        return 1
+    fi
+
+    # 清空现有数据（如果需要）
+    info "清空Neo4j现有数据..."
+    docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    MATCH (n) DETACH DELETE n
+    " >/dev/null 2>&1 || true
+
+    # 1. 恢复数据库转储（如果存在）
+    if [[ -f "$neo4j_dir/graph.dump" ]]; then
+        info "恢复Neo4j数据库转储..."
+
+        # 停止Neo4j服务
+        docker stop mem0-neo4j >/dev/null 2>&1 || true
+
+        # 复制转储文件到容器
+        docker cp "$neo4j_dir/graph.dump" mem0-neo4j:/tmp/graph.dump
+
+        # 加载数据库转储
+        docker start mem0-neo4j >/dev/null 2>&1
+        sleep 10
+
+        docker exec mem0-neo4j neo4j-admin database load neo4j --from-path=/tmp --overwrite-destination=true >/dev/null 2>&1 || {
+            warn "数据库转储恢复失败，尝试其他方法"
+        }
+
+        # 重启Neo4j
+        docker restart mem0-neo4j >/dev/null 2>&1
+        sleep 15
+
+        success "Neo4j数据库转储恢复完成"
+    fi
+
+    # 等待Neo4j重新启动
+    info "等待Neo4j重新启动..."
+    attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        if docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+
+    # 2. 恢复索引和约束
+    if [[ -f "$neo4j_dir/indexes.cypher" ]]; then
+        info "恢复Neo4j索引和约束..."
+
+        # 执行索引和约束创建脚本
+        docker exec -i mem0-neo4j cypher-shell -u neo4j -p password < "$neo4j_dir/indexes.cypher" >/dev/null 2>&1 || {
+            warn "索引和约束恢复失败"
+        }
+
+        success "Neo4j索引和约束恢复完成"
+    fi
+
+    # 3. 如果有恢复脚本，执行它
+    if [[ -f "$neo4j_dir/restore-neo4j.sh" ]]; then
+        info "执行Neo4j自定义恢复脚本..."
+        cd "$neo4j_dir"
+        bash restore-neo4j.sh >/dev/null 2>&1 || {
+            warn "自定义恢复脚本执行失败"
+        }
+        cd - >/dev/null
+    fi
+
+    # 4. 验证恢复结果
+    info "验证Neo4j恢复结果..."
+    local node_count=$(docker exec mem0-neo4j cypher-shell -u neo4j -p password "MATCH (n) RETURN count(n) as count" 2>/dev/null | tail -1 | tr -d '"' || echo "0")
+    local rel_count=$(docker exec mem0-neo4j cypher-shell -u neo4j -p password "MATCH ()-[r]->() RETURN count(r) as count" 2>/dev/null | tail -1 | tr -d '"' || echo "0")
+
+    info "恢复统计: $node_count 个节点, $rel_count 个关系"
+    success "Neo4j图数据库恢复完成"
+
+    return 0
+}
+
+# 验证Neo4j恢复
+verify_neo4j_restore() {
+    info "验证Neo4j恢复状态..."
+
+    # 检查Neo4j连接
+    if ! docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+        error "Neo4j连接失败"
+        return 1
+    fi
+
+    # 检查数据
+    local node_count=$(docker exec mem0-neo4j cypher-shell -u neo4j -p password "MATCH (n) RETURN count(n) as count" 2>/dev/null | tail -1 | tr -d '"' || echo "0")
+    local rel_count=$(docker exec mem0-neo4j cypher-shell -u neo4j -p password "MATCH ()-[r]->() RETURN count(r) as count" 2>/dev/null | tail -1 | tr -d '"' || echo "0")
+
+    info "Neo4j数据统计: $node_count 个节点, $rel_count 个关系"
+
+    if [[ "$node_count" -gt 0 ]] || [[ "$rel_count" -gt 0 ]]; then
+        success "Neo4j数据验证通过"
+        return 0
+    else
+        warn "Neo4j数据为空，可能是新安装或备份为空"
+        return 0
+    fi
 }

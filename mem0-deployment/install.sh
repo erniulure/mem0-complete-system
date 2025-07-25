@@ -156,7 +156,15 @@ main() {
 
     # 检查服务状态
     check_services
-    
+
+    # 初始化Neo4j图数据库
+    log_step "初始化Neo4j图数据库..."
+    if [ -f "./scripts/init-neo4j.sh" ]; then
+        bash ./scripts/init-neo4j.sh
+    else
+        log_warning "Neo4j初始化脚本未找到，跳过初始化"
+    fi
+
     # 显示完成信息
     show_completion
 }
@@ -209,6 +217,11 @@ wait_for_services_healthy() {
             all_healthy=false
         fi
 
+        # 检查Neo4j
+        if ! docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" > /dev/null 2>&1; then
+            all_healthy=false
+        fi
+
         # 检查Mem0 API
         if ! curl -s http://localhost:8888/ > /dev/null 2>&1; then
             all_healthy=false
@@ -231,7 +244,7 @@ wait_for_services_healthy() {
 check_services() {
     log_step "检查服务状态..."
 
-    local services=("mem0-postgres" "mem0-qdrant" "mem0-api" "mem0-webui")
+    local services=("mem0-postgres" "mem0-qdrant" "mem0-neo4j" "mem0-api" "mem0-webui")
 
     for service in "${services[@]}"; do
         if docker ps | grep -q "$service"; then

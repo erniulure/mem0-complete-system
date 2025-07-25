@@ -181,6 +181,66 @@ restore_configs() {
     done
 }
 
+# 恢复Neo4j数据
+restore_neo4j() {
+    local backup_path="$1"
+    local neo4j_dir="$backup_path/neo4j"
+
+    info "检查Neo4j备份路径: $neo4j_dir"
+
+    if [[ ! -d "$neo4j_dir" ]]; then
+        warn "未找到Neo4j备份数据，跳过恢复"
+        return 0
+    fi
+
+    info "恢复Neo4j图数据库..."
+
+    # 检查Neo4j是否运行
+    if ! docker ps | grep -q "mem0-neo4j"; then
+        warn "Neo4j容器未运行，跳过恢复"
+        return 0
+    fi
+
+    # 等待Neo4j启动
+    local max_attempts=30
+    local attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        if docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 2
+    done
+
+    if [ $attempt -eq $max_attempts ]; then
+        warn "Neo4j服务启动超时，跳过恢复"
+        return 0
+    fi
+
+    # 清空现有数据
+    info "清空Neo4j现有数据..."
+    docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    MATCH (n) DETACH DELETE n
+    " >/dev/null 2>&1 || true
+
+    # 恢复索引
+    if [[ -f "$neo4j_dir/indexes.cypher" ]]; then
+        info "恢复Neo4j索引..."
+        docker exec -i mem0-neo4j cypher-shell -u neo4j -p password < "$neo4j_dir/indexes.cypher" >/dev/null 2>&1 || true
+    fi
+
+    # 恢复数据
+    if [[ -f "$neo4j_dir/neo4j-export.csv" ]]; then
+        info "恢复Neo4j数据..."
+        docker cp "$neo4j_dir/neo4j-export.csv" mem0-neo4j:/tmp/
+        docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+        CALL apoc.import.csv([{fileName: '/tmp/neo4j-export.csv', labels: ['Data']}], [], {})
+        " >/dev/null 2>&1 || true
+    fi
+
+    success "Neo4j数据恢复完成"
+}
+
 # 重启服务
 restart_services() {
     info "重启Mem0服务..."
@@ -276,6 +336,7 @@ main() {
     restore_postgres "$backup_path"
     restart_services
     restore_qdrant "$backup_path"
+    restore_neo4j "$backup_path"
     
     echo
     success "恢复完成！"

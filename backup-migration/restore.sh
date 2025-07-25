@@ -253,6 +253,7 @@ execute_restore() {
     # 恢复数据
     restore_qdrant "$restore_dir"
     restore_postgres "$restore_dir"
+    restore_neo4j "$restore_dir"
     
     # 验证恢复结果
     if [[ "$SKIP_VERIFICATION" != "true" ]]; then

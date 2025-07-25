@@ -353,6 +353,7 @@ main() {
 
     # 先备份需要服务运行的数据
     backup_qdrant "$BACKUP_PATH"
+    backup_neo4j "$BACKUP_PATH"
 
     # 停止服务（确保数据一致性）
     if [[ "$DRY_RUN" != "true" ]]; then

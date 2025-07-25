@@ -163,7 +163,7 @@ create_backup_dir() {
     local backup_path="$BACKUP_DIR/$backup_name"
 
     info "创建备份目录: $backup_path"
-    mkdir -p "$backup_path"/{qdrant,postgres,configs,env,logs}
+    mkdir -p "$backup_path"/{qdrant,postgres,neo4j,configs,env,logs}
 
     if [[ ! -d "$backup_path" ]]; then
         error "无法创建备份目录: $backup_path"
@@ -330,4 +330,152 @@ verify_backup() {
     
     success "备份文件完整性验证通过"
     return 0
+}
+
+# =============================================================================
+# Neo4j 图数据库备份函数
+# =============================================================================
+
+# 备份Neo4j图数据库
+backup_neo4j() {
+    local backup_path="$1"
+    local neo4j_backup_dir="$backup_path/neo4j"
+
+    info "开始备份Neo4j图数据库..."
+
+    # 检查Neo4j容器是否运行
+    if ! docker ps | grep -q "mem0-neo4j"; then
+        warning "Neo4j容器未运行，跳过Neo4j备份"
+        return 0
+    fi
+
+    # 检查Neo4j连接
+    if ! docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+        warning "无法连接到Neo4j，跳过Neo4j备份"
+        return 0
+    fi
+
+    # 1. 导出图数据库转储
+    info "导出Neo4j数据库转储..."
+    if docker exec mem0-neo4j neo4j-admin database dump neo4j --to-path=/tmp/backup 2>/dev/null; then
+        docker cp mem0-neo4j:/tmp/backup/neo4j.dump "$neo4j_backup_dir/graph.dump"
+        success "Neo4j数据库转储完成"
+    else
+        warning "Neo4j数据库转储失败，尝试其他方法"
+    fi
+
+    # 2. 导出节点数据
+    info "导出Neo4j节点数据..."
+    docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    CALL apoc.export.csv.all('/tmp/nodes.csv', {})
+    " >/dev/null 2>&1 || true
+
+    if docker exec mem0-neo4j test -f /tmp/nodes.csv 2>/dev/null; then
+        docker cp mem0-neo4j:/tmp/nodes.csv "$neo4j_backup_dir/nodes.csv"
+        success "Neo4j节点数据导出完成"
+    fi
+
+    # 3. 导出关系数据
+    info "导出Neo4j关系数据..."
+    docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    MATCH (n)-[r]->(m)
+    RETURN id(n) as source_id, type(r) as relationship_type, id(m) as target_id, properties(r) as properties
+    " > "$neo4j_backup_dir/relationships.csv" 2>/dev/null || true
+
+    # 4. 导出索引和约束
+    info "导出Neo4j索引和约束..."
+    docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties, options
+    " > "$neo4j_backup_dir/indexes.cypher" 2>/dev/null || true
+
+    docker exec mem0-neo4j cypher-shell -u neo4j -p password "
+    SHOW CONSTRAINTS YIELD name, type, entityType, labelsOrTypes, properties, options
+    " >> "$neo4j_backup_dir/indexes.cypher" 2>/dev/null || true
+
+    # 5. 备份Neo4j配置
+    info "备份Neo4j配置..."
+    docker exec mem0-neo4j cat /var/lib/neo4j/conf/neo4j.conf > "$neo4j_backup_dir/neo4j.conf" 2>/dev/null || true
+
+    # 6. 创建恢复脚本
+    cat > "$neo4j_backup_dir/restore-neo4j.sh" << 'EOF'
+#!/bin/bash
+# Neo4j恢复脚本
+
+echo "开始恢复Neo4j图数据库..."
+
+# 等待Neo4j启动
+echo "等待Neo4j启动..."
+for i in {1..60}; do
+    if docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+        echo "Neo4j已启动"
+        break
+    fi
+    sleep 2
+done
+
+# 恢复索引和约束
+if [ -f "indexes.cypher" ]; then
+    echo "恢复索引和约束..."
+    docker exec -i mem0-neo4j cypher-shell -u neo4j -p password < indexes.cypher
+fi
+
+# 如果有数据库转储，恢复它
+if [ -f "graph.dump" ]; then
+    echo "恢复数据库转储..."
+    docker cp graph.dump mem0-neo4j:/tmp/
+    docker exec mem0-neo4j neo4j-admin database load neo4j --from-path=/tmp --overwrite-destination=true
+    docker restart mem0-neo4j
+fi
+
+echo "Neo4j恢复完成"
+EOF
+
+    chmod +x "$neo4j_backup_dir/restore-neo4j.sh"
+
+    success "Neo4j图数据库备份完成"
+    return 0
+}
+
+# 验证Neo4j备份
+verify_neo4j_backup() {
+    local backup_path="$1"
+    local neo4j_backup_dir="$backup_path/neo4j"
+
+    info "验证Neo4j备份..."
+
+    if [[ ! -d "$neo4j_backup_dir" ]]; then
+        warning "Neo4j备份目录不存在"
+        return 1
+    fi
+
+    local files_found=0
+
+    # 检查各种备份文件
+    if [[ -f "$neo4j_backup_dir/graph.dump" ]]; then
+        files_found=$((files_found + 1))
+        info "找到Neo4j数据库转储文件"
+    fi
+
+    if [[ -f "$neo4j_backup_dir/nodes.csv" ]]; then
+        files_found=$((files_found + 1))
+        info "找到Neo4j节点数据文件"
+    fi
+
+    if [[ -f "$neo4j_backup_dir/relationships.csv" ]]; then
+        files_found=$((files_found + 1))
+        info "找到Neo4j关系数据文件"
+    fi
+
+    if [[ -f "$neo4j_backup_dir/indexes.cypher" ]]; then
+        files_found=$((files_found + 1))
+        info "找到Neo4j索引和约束文件"
+    fi
+
+    if [[ $files_found -gt 0 ]]; then
+        success "Neo4j备份验证通过 ($files_found 个文件)"
+        return 0
+    else
+        warning "未找到Neo4j备份文件"
+        return 1
+    fi
 }

@@ -35,10 +35,10 @@ def _clean_json_schema_properties(obj: Any) -> Any:
     
     # Gemini API不支持的JSON Schema字段
     unsupported_fields = {
-        "exclusiveMaximum", "exclusiveMinimum", "const", "examples", 
+        "exclusiveMaximum", "exclusiveMinimum", "const", "examples",
         "contentEncoding", "contentMediaType", "if", "then", "else",
         "allOf", "anyOf", "oneOf", "not", "definitions", "$schema",
-        "$id", "$ref", "$comment", "readOnly", "writeOnly"
+        "$id", "$ref", "$comment", "readOnly", "writeOnly", "additionalProperties"
     }
     
     cleaned = {}

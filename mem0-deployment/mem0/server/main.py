@@ -39,6 +39,14 @@ except FileNotFoundError:
                 "embedding_model_dims": 768,
             },
         },
+        "graph_store": {
+            "provider": "neo4j",
+            "config": {
+                "url": "bolt://mem0-neo4j:7687",
+                "username": "neo4j",
+                "password": "password"
+            }
+        },
         "llm": {
             "provider": "openai",
             "config": {
@@ -110,9 +118,24 @@ async def add_memory(request: AddMemoryRequest):
             "user_id": request.user_id
         }
 
+        # 添加自定义事实提取提示词，保持上下文关联
+        contextual_prompt = """
+        从对话中提取关键事实时，请保持实体之间的关联性：
+
+        1. 识别人物实体（姓名、角色、身份）
+        2. 将相关属性关联到同一个人物
+        3. 保持业务上下文（如：刘昶是药店老板，需要制作员工手册）
+        4. 提取完整的需求和意图
+
+        格式：[人物名称] + [属性/需求]
+        例如：刘昶（药店老板）需要制作员工手册和进行工资改革
+        """
+
         # 将custom_instructions转换为prompt参数（mem0支持）
         if request.custom_instructions:
-            add_params["prompt"] = request.custom_instructions
+            add_params["prompt"] = f"{contextual_prompt}\n\n{request.custom_instructions}"
+        else:
+            add_params["prompt"] = contextual_prompt
 
         # 将includes和excludes信息添加到metadata中（mem0支持）
         metadata = {}

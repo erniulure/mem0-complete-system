@@ -171,6 +171,43 @@ validate_postgres() {
     fi
 }
 
+# 验证Neo4j图数据库
+validate_neo4j() {
+    info "验证Neo4j图数据库..."
+
+    # 检查连接性
+    if docker exec mem0-neo4j cypher-shell -u neo4j -p password "RETURN 1" >/dev/null 2>&1; then
+        record_result "Neo4j连接" "PASS" "连接成功"
+
+        # 检查数据统计
+        local node_count=$(docker exec mem0-neo4j cypher-shell -u neo4j -p password "MATCH (n) RETURN count(n) as count" 2>/dev/null | tail -1 | tr -d '"' || echo "0")
+        local rel_count=$(docker exec mem0-neo4j cypher-shell -u neo4j -p password "MATCH ()-[r]->() RETURN count(r) as count" 2>/dev/null | tail -1 | tr -d '"' || echo "0")
+
+        record_result "Neo4j数据统计" "INFO" "$node_count 个节点, $rel_count 个关系"
+
+        # 检查索引
+        local index_count=$(docker exec mem0-neo4j cypher-shell -u neo4j -p password "SHOW INDEXES YIELD name RETURN count(name) as count" 2>/dev/null | tail -1 | tr -d '"' || echo "0")
+        record_result "Neo4j索引" "INFO" "$index_count 个索引"
+
+        # 检查APOC插件
+        if docker exec mem0-neo4j cypher-shell -u neo4j -p password "CALL apoc.help('apoc') YIELD name RETURN count(name) as count" >/dev/null 2>&1; then
+            record_result "Neo4j APOC插件" "PASS" "APOC插件可用"
+        else
+            record_result "Neo4j APOC插件" "WARN" "APOC插件不可用"
+        fi
+
+        # 检查Web界面
+        if curl -s http://localhost:7474 >/dev/null 2>&1; then
+            record_result "Neo4j Browser" "PASS" "Web界面可访问"
+        else
+            record_result "Neo4j Browser" "WARN" "Web界面不可访问"
+        fi
+
+    else
+        record_result "Neo4j连接" "FAIL" "无法连接到Neo4j服务"
+    fi
+}
+
 # 验证Mem0 API
 validate_mem0_api() {
     info "验证Mem0 API功能..."
@@ -392,6 +429,10 @@ main() {
         esac
     done
     
+    # 初始化变量
+    QUIET=${QUIET:-false}
+    DEBUG=${DEBUG:-0}
+
     # 初始化
     init_log
     
@@ -412,6 +453,7 @@ main() {
     elif [[ "$data_only" == "true" ]]; then
         validate_qdrant
         validate_postgres
+        validate_neo4j
     elif [[ "$api_only" == "true" ]]; then
         validate_mem0_api
         validate_webui
@@ -420,6 +462,7 @@ main() {
         validate_docker_services
         validate_qdrant
         validate_postgres
+        validate_neo4j
         validate_mem0_api
         validate_webui
         validate_configs
