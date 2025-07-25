@@ -99,58 +99,7 @@ services:
       - mem0-neo4j
 
 
-  # Web界面服务
-  mem0-webui:
-    build:
-      context: ../mem0Client
-      dockerfile: Dockerfile
-    container_name: mem0-webui
-    restart: unless-stopped
-    ports:
-      - "${WEBUI_PORT:-8503}:8503"
-    volumes:
-      - ../mem0Client:/app  # 挂载源代码目录以支持开发模式
-      - ${DATA_PATH:-./data}:/app/data
-      - ${LOGS_PATH:-./logs}:/app/logs
-    environment:
-      # 基础配置
-      - MEM0_API_URL=http://mem0-api:8000
-      - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-standalone}
 
-      # PostgreSQL数据库配置
-      - POSTGRES_HOST=${POSTGRES_HOST:-mem0-postgres}
-      - POSTGRES_DB=${POSTGRES_DB:-mem0}
-      - POSTGRES_USER=${POSTGRES_USER:-mem0}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mem0_secure_password_2024}
-
-      # AI服务配置 (支持内置或外部)
-      - GEMINI_BALANCE_MODE=${GEMINI_BALANCE_MODE:-external}
-      - EXTERNAL_GEMINI_BALANCE_URL=${EXTERNAL_GEMINI_BALANCE_URL:-http://localhost:8000/v1}
-      - EXTERNAL_GEMINI_BALANCE_TOKEN=${EXTERNAL_GEMINI_BALANCE_TOKEN:-q1q2q3q4}
-      - INTEGRATED_GEMINI_BALANCE_URL=http://gemini-balance-integrated:8000/v1
-      - INTEGRATED_GEMINI_BALANCE_TOKEN=q1q2q3q4
-
-      # 备用OpenAI配置
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-
-      # 安全配置
-      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-your-secret-key-change-this}
-      - DEFAULT_ADMIN_USERNAME=${DEFAULT_ADMIN_USERNAME:-admin}
-      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD:-admin123}
-
-      # 日志配置
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    depends_on:
-      - mem0-api
-      - mem0-postgres
-
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8503')\" || exit 1"]
-      interval: ${HEALTH_CHECK_INTERVAL:-30s}
-      timeout: ${HEALTH_CHECK_TIMEOUT:-10s}
-      retries: ${HEALTH_CHECK_RETRIES:-3}
-      start_period: 60s
 
 volumes:
   postgres_data:
