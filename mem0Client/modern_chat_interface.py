@@ -11,6 +11,65 @@ import os
 from datetime import datetime
 from streamlit_chat_prompt import prompt
 
+class SimpleImageProcessor:
+    """简单的图片处理器备用类"""
+
+    @staticmethod
+    def process_image(image_data):
+        """简单的图片处理"""
+        try:
+            from PIL import Image
+            import base64
+            import io
+
+            if isinstance(image_data, str):
+                # base64字符串
+                if image_data.startswith('data:image'):
+                    image_data = image_data.split(',')[1]
+
+                img_bytes = base64.b64decode(image_data)
+                img = Image.open(io.BytesIO(img_bytes))
+            else:
+                # 文件对象
+                img = Image.open(image_data)
+
+            # 获取基本信息
+            width, height = img.size
+            format_type = img.format or 'PNG'
+
+            # 转换为base64
+            buffer = io.BytesIO()
+            img.save(buffer, format=format_type)
+            size_bytes = len(buffer.getvalue())
+            buffer.seek(0)
+            img_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+            return {
+                "success": True,
+                "base64": img_base64,
+                "width": width,
+                "height": height,
+                "format": format_type,
+                "size_bytes": size_bytes,
+                "size_mb": round(size_bytes / 1024 / 1024, 2)
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+def ensure_multimodal_processor():
+    """确保multimodal_processor已初始化"""
+    if 'multimodal_processor' not in st.session_state:
+        try:
+            from multimodal_model_selector import MultimodalProcessor
+            st.session_state.multimodal_processor = MultimodalProcessor()
+        except Exception as e:
+            st.error(f"❌ 初始化多模态处理器失败: {str(e)}")
+            # 创建一个简单的备用处理器
+            st.session_state.multimodal_processor = SimpleImageProcessor()
+
 def handle_modern_chat_message(user_text: str, image_info: dict = None):
     """处理现代化聊天消息 - 集成智能记忆功能"""
     try:
@@ -123,11 +182,33 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
                     "content": msg['content']
                 })
 
-        # 添加增强的用户消息（包含记忆上下文）
-        messages.append({
-            "role": "user",
-            "content": enhanced_user_input  # 使用增强的输入而不是原始输入
-        })
+        # 添加增强的用户消息（包含记忆上下文和图片）
+        user_message_content = enhanced_user_input  # 使用增强的输入而不是原始输入
+
+        # 如果有图片，构建多模态消息格式
+        if image_info and image_info.get("success"):
+            # 使用OpenAI兼容的多模态消息格式
+            messages.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": user_message_content
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/{image_info.get('format', 'png').lower()};base64,{image_info['base64']}"
+                        }
+                    }
+                ]
+            })
+        else:
+            # 纯文本消息
+            messages.append({
+                "role": "user",
+                "content": user_message_content
+            })
 
         # 调用gemini-balance API
         payload = {
@@ -280,14 +361,15 @@ def modern_smart_chat_interface():
                 image_info = None
                 if user_images:
                     try:
+                        # 确保多模态处理器已初始化
+                        ensure_multimodal_processor()
+
                         # 使用第一张图片
                         first_image = user_images[0]
-                        
-                        # 将PIL图片转换为base64
-                        img_buffer = io.BytesIO()
-                        first_image.save(img_buffer, format='PNG')
-                        img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
-                        
+
+                        # first_image 是 FileData 对象，直接使用其 data 属性（base64数据）
+                        img_base64 = first_image.data
+
                         # 处理图片
                         image_info = st.session_state.multimodal_processor.process_image(img_base64)
                         if not image_info["success"]:

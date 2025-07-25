@@ -24,6 +24,81 @@ from modern_chat_interface import modern_smart_chat_interface
 from auth_system import AuthSystem
 from api_patches import MemoryAPIPatched, SecurityUtils, apply_security_patches
 
+class SimpleImageProcessor:
+    """简单的图片处理器备用类"""
+
+    @staticmethod
+    def process_image(image_data):
+        """简单的图片处理"""
+        try:
+            from PIL import Image
+            import base64
+            import io
+
+            if isinstance(image_data, str):
+                # base64字符串
+                if image_data.startswith('data:image'):
+                    image_data = image_data.split(',')[1]
+
+                img_bytes = base64.b64decode(image_data)
+                img = Image.open(io.BytesIO(img_bytes))
+            else:
+                # 文件对象
+                img = Image.open(image_data)
+
+            # 获取基本信息
+            width, height = img.size
+            format_type = img.format or 'PNG'
+
+            # 转换为base64
+            buffer = io.BytesIO()
+            img.save(buffer, format=format_type)
+            size_bytes = len(buffer.getvalue())
+            buffer.seek(0)
+            img_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+            return {
+                "success": True,
+                "base64": img_base64,
+                "width": width,
+                "height": height,
+                "format": format_type,
+                "size_bytes": size_bytes,
+                "size_mb": round(size_bytes / 1024 / 1024, 2)
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    @staticmethod
+    def validate_image(image_info):
+        """验证图片是否符合要求"""
+        if not image_info["success"]:
+            return False, f"图片处理失败: {image_info['error']}"
+
+        # 检查文件大小 (限制20MB)
+        if image_info["size_mb"] > 20:
+            return False, f"图片太大: {image_info['size_mb']}MB (最大20MB)"
+
+        # 检查分辨率 (限制8000x8000)
+        if image_info["width"] > 8000 or image_info["height"] > 8000:
+            return False, f"分辨率太高: {image_info['width']}x{image_info['height']} (最大8000x8000)"
+
+        return True, "图片验证通过"
+
+def ensure_multimodal_processor():
+    """确保multimodal_processor已初始化"""
+    if 'multimodal_processor' not in st.session_state:
+        try:
+            from multimodal_model_selector import MultimodalProcessor
+            st.session_state.multimodal_processor = MultimodalProcessor()
+        except Exception as e:
+            st.error(f"❌ 初始化多模态处理器失败: {str(e)}")
+            # 创建一个简单的备用处理器
+            st.session_state.multimodal_processor = SimpleImageProcessor()
+
 # 导入WebUI独立数据库
 try:
     from database.webui_db_config import webui_db
@@ -236,7 +311,8 @@ if 'config' not in st.session_state:
         st.session_state.config = Config()
         st.session_state.uploader = MemoryUploader(st.session_state.config)
         st.session_state.searcher = MemorySearcher(st.session_state.config)
-        st.session_state.multimodal_processor = MultimodalProcessor()
+        # 使用安全的初始化方式
+        ensure_multimodal_processor()
         st.session_state.initialized = True
         # 只在首次初始化时设置API连接状态，避免重置已有的连接状态
         if 'api_connected' not in st.session_state:
@@ -1246,23 +1322,82 @@ def handle_multimodal_chat_message(user_input: str, image_info: Dict = None):
 
     st.session_state.chat_history.append(user_message)
 
-    # 生成自然的AI回复
-    if has_image:
-        ai_response = f"我看到了您分享的图片（{image_info['width']}x{image_info['height']}，{image_info['format']}格式）。"
-        if user_input:
-            ai_response += f" 关于您的问题：'{user_input[:50]}...'，我已经使用多模态AI模型进行了分析。"
+    # 调用真实的AI API生成回复
+    try:
+        with st.spinner("🤖 AI正在思考中..."):
+            # 获取API配置
+            gemini_balance_url = os.getenv('GEMINI_BALANCE_URL', 'http://gemini-balance:8000/v1')
+            auth_token = st.session_state.get('api_settings', {}).get('api_key') or os.getenv('INTEGRATED_GEMINI_BALANCE_TOKEN', os.getenv('GEMINI_BALANCE_TOKEN', 'q1q2q3q4'))
+
+            # 构建消息
+            messages = [
+                {
+                    "role": "system",
+                    "content": "你是一个智能助手，能够理解和分析图片内容。请用中文回复，保持自然和友好的语调。"
+                }
+            ]
+
+            # 构建用户消息
+            user_content = user_input or "请分析这张图片"
+
+            if has_image:
+                # 多模态消息格式
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": user_content
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/{image_info.get('format', 'png').lower()};base64,{image_info['base64']}"
+                            }
+                        }
+                    ]
+                })
+            else:
+                # 纯文本消息
+                messages.append({
+                    "role": "user",
+                    "content": user_content
+                })
+
+            # 调用API
+            payload = {
+                "model": model_selection.get('selected_model', 'gemini-1.5-flash'),
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 2000
+            }
+
+            headers = {
+                "Authorization": f"Bearer {auth_token}",
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(
+                f"{gemini_balance_url}/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                ai_response = result.get("choices", [{}])[0].get("message", {}).get("content", "抱歉，我无法处理您的请求。")
+            else:
+                st.error(f"API调用失败: {response.status_code} - {response.text}")
+                ai_response = f"抱歉，API调用失败。状态码: {response.status_code}"
+
+    except Exception as e:
+        st.error(f"处理请求时出错: {str(e)}")
+        # 降级到模拟回复
+        if has_image:
+            ai_response = f"我看到了您分享的图片（{image_info['width']}x{image_info['height']}，{image_info['format']}格式），但由于技术问题，暂时无法进行详细分析。"
         else:
-            ai_response += "我已经使用多模态AI模型进行了分析。"
-    else:
-        # 根据输入内容生成更自然的回复
-        if user_input.strip().lower() in ['你好', 'hello', 'hi', '嗨', '哈喽']:
-            ai_response = "你好！我是AI助手，很高兴为您服务。有什么我可以帮助您的吗？"
-        elif user_input.strip().lower() in ['测试', 'test', '试试', '看看']:
-            ai_response = f"系统运行正常！我正在使用 {model_selection['selected_model']} 模型为您服务。您可以向我提问或分享图片进行分析。"
-        elif len(user_input.strip()) < 5:
-            ai_response = "我收到了您的消息。如果您有具体的问题或需要帮助，请详细描述，我会尽力为您解答。"
-        else:
-            ai_response = f"我理解您提到的关于 '{user_input[:50]}...' 的内容。我已经使用 {model_selection['selected_model']} 模型进行处理。"
+            ai_response = f"抱歉，处理您的请求时遇到了技术问题: {str(e)}"
 
     st.session_state.chat_history.append({
         'role': 'assistant',
@@ -1732,44 +1867,86 @@ def memory_management_interface():
     uploaded_image = None
     if content_mode == "🖼️ 文字+图片记忆":
         st.markdown("---")
-        st.subheader("📷 图片内容")
 
-        uploaded_image = st.file_uploader(
-            "上传图片",
-            type=['png', 'jpg', 'jpeg', 'gif', 'bmp'],
-            help="支持PNG、JPG、JPEG、GIF、BMP格式，最大20MB"
-        )
+        # 创建选项卡
+        tab1, tab2 = st.tabs(["📷 图片内容", "📄 文档内容"])
 
-        if uploaded_image:
-            # 显示图片预览和信息
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.image(uploaded_image, caption="图片预览", width=200)
+        with tab1:
+            st.subheader("📷 图片内容")
+            uploaded_image = st.file_uploader(
+                "上传图片",
+                type=['png', 'jpg', 'jpeg', 'gif', 'bmp'],
+                help="支持PNG、JPG、JPEG、GIF、BMP格式，最大20MB",
+                key="memory_image_upload"
+            )
 
-            with col2:
-                # 处理图片获取信息
-                image_info = st.session_state.multimodal_processor.process_image(uploaded_image)
-                if image_info["success"]:
-                    st.write(f"**格式:** {image_info['format']}")
-                    st.write(f"**尺寸:** {image_info['width']} x {image_info['height']}")
-                    st.write(f"**大小:** {image_info['size_mb']} MB")
+        with tab2:
+            st.subheader("📄 文档内容")
+            uploaded_document = st.file_uploader(
+                "上传文档",
+                type=['pdf', 'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'txt', 'md', 'csv', 'json'],
+                help="支持PDF、Word、Excel、PowerPoint、文本等格式，最大2GB",
+                key="memory_document_upload",
+                accept_multiple_files=False
+            )
 
-                    # 验证图片
-                    is_valid, validation_msg = st.session_state.multimodal_processor.validate_image(image_info)
-                    if is_valid:
-                        st.success(validation_msg)
+            if uploaded_image:
+                # 显示图片预览和信息
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.image(uploaded_image, caption="图片预览", width=200)
+
+                with col2:
+                    # 确保多模态处理器已初始化
+                    ensure_multimodal_processor()
+
+                    # 处理图片获取信息
+                    image_info = st.session_state.multimodal_processor.process_image(uploaded_image)
+                    if image_info["success"]:
+                        st.write(f"**格式:** {image_info['format']}")
+                        st.write(f"**尺寸:** {image_info['width']} x {image_info['height']}")
+                        st.write(f"**大小:** {image_info['size_mb']} MB")
+
+                        # 验证图片
+                        is_valid, validation_msg = st.session_state.multimodal_processor.validate_image(image_info)
+                        if is_valid:
+                            st.success(validation_msg)
+                        else:
+                            st.error(validation_msg)
                     else:
-                        st.error(validation_msg)
+                        st.error(f"图片处理失败: {image_info['error']}")
+
+            if uploaded_document:
+                # 手动验证文件类型
+                file_extension = uploaded_document.name.split('.')[-1].lower() if '.' in uploaded_document.name else ''
+                supported_extensions = ['pdf', 'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'txt', 'md', 'csv']
+
+                if file_extension not in supported_extensions:
+                    st.error(f"❌ 不支持的文件格式: .{file_extension}")
+                    st.info(f"支持的格式: {', '.join(supported_extensions)}")
                 else:
-                    st.error(f"图片处理失败: {image_info['error']}")
+                    # 显示文档信息
+                    st.write("**文档信息:**")
+                    file_size_mb = len(uploaded_document.getvalue()) / 1024 / 1024
+                    st.write(f"**文件名:** {uploaded_document.name}")
+                    st.write(f"**文件类型:** {uploaded_document.type}")
+                    st.write(f"**文件扩展名:** .{file_extension}")
+                    st.write(f"**文件大小:** {file_size_mb:.2f} MB")
+
+                    # 检查文件大小限制
+                    if file_size_mb > 2048:  # 2GB限制
+                        st.error("❌ 文件太大，Gemini API限制单个文件最大2GB")
+                    else:
+                        st.success("✅ 文档格式支持，可以上传到Gemini进行分析")
+                        st.info("💡 该文档将通过Gemini Files API上传，AI可以直接理解和分析文档内容")
 
     # 添加按钮
     st.markdown("---")
     if st.button("💾 添加记忆", type="primary"):
-        if user_content.strip() or assistant_content.strip() or uploaded_image:
-            add_sample_memory(user_content, assistant_content, uploaded_image)
+        if user_content.strip() or assistant_content.strip() or uploaded_image or uploaded_document:
+            add_sample_memory(user_content, assistant_content, uploaded_image, uploaded_document)
         else:
-            st.warning("⚠️ 请至少输入文字内容或上传图片")
+            st.warning("⚠️ 请至少输入文字内容、上传图片或上传文档")
 
     st.divider()
 
@@ -1791,7 +1968,7 @@ def memory_management_interface():
     # 显示记忆列表
     display_memory_list(search_filter, category_filter, date_filter)
 
-def add_sample_memory(user_content: str, assistant_content: str, uploaded_image=None):
+def add_sample_memory(user_content: str, assistant_content: str, uploaded_image=None, uploaded_document=None):
     """添加记忆 - 支持多模态内容"""
     try:
         messages = []
@@ -1803,23 +1980,59 @@ def add_sample_memory(user_content: str, assistant_content: str, uploaded_image=
         # 处理图片
         image_info = None
         if uploaded_image:
+            # 确保多模态处理器已初始化
+            ensure_multimodal_processor()
+
             image_info = st.session_state.multimodal_processor.process_image(uploaded_image)
             if not image_info["success"]:
                 st.error(f"❌ 图片处理失败: {image_info['error']}")
                 return
 
-        if not messages and not image_info:
-            st.warning("⚠️ 请至少输入文字内容或上传图片")
+        # 处理文档
+        document_info = None
+        if uploaded_document:
+            try:
+                # 验证文件类型
+                file_extension = uploaded_document.name.split('.')[-1].lower() if '.' in uploaded_document.name else ''
+                supported_extensions = ['pdf', 'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'txt', 'md', 'csv']
+
+                if file_extension not in supported_extensions:
+                    st.error(f"❌ 不支持的文件格式: .{file_extension}")
+                    st.info(f"支持的格式: {', '.join(supported_extensions)}")
+                    return
+
+                # 准备文档信息
+                file_size_mb = len(uploaded_document.getvalue()) / 1024 / 1024
+                if file_size_mb > 2048:  # 2GB限制
+                    st.error("❌ 文件太大，Gemini API限制单个文件最大2GB")
+                    return
+
+                document_info = {
+                    "name": uploaded_document.name,
+                    "type": uploaded_document.type,
+                    "extension": file_extension,
+                    "size_mb": file_size_mb,
+                    "content": uploaded_document.getvalue()  # 二进制内容
+                }
+                st.info(f"📄 准备上传文档: {document_info['name']} ({document_info['size_mb']:.2f} MB)")
+
+            except Exception as e:
+                st.error(f"❌ 文档处理失败: {str(e)}")
+                return
+
+        if not messages and not image_info and not document_info:
+            st.warning("⚠️ 请至少输入文字内容、上传图片或上传文档")
             return
 
         # 确保model_selector可用并进行智能模型选择
         ensure_model_selector()
-        content_for_analysis = user_content or assistant_content or "图片记忆"
+        content_for_analysis = user_content or assistant_content or "多媒体记忆"
         has_image = image_info is not None
+        has_document = document_info is not None
 
         model_selection = st.session_state.model_selector.select_optimal_model(
             user_query=content_for_analysis,
-            has_image=has_image
+            has_image=has_image or has_document  # 文档也需要多模态模型
         )
 
         # 字段名标准化：确保selected_model字段存在
@@ -2062,6 +2275,9 @@ def memory_search_interface():
                 st.image(search_image, caption="搜索图片", width=150)
 
             with col2:
+                # 确保多模态处理器已初始化
+                ensure_multimodal_processor()
+
                 image_info = st.session_state.multimodal_processor.process_image(search_image)
                 if image_info["success"]:
                     st.write(f"**格式:** {image_info['format']}")
@@ -2141,6 +2357,9 @@ def perform_multimodal_search(query: str, search_image, search_type: str, limit:
         # 处理图片
         image_base64 = None
         if search_image:
+            # 确保多模态处理器已初始化
+            ensure_multimodal_processor()
+
             image_info = st.session_state.multimodal_processor.process_image(search_image)
             if image_info["success"]:
                 image_base64 = image_info['base64']
