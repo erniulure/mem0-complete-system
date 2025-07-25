@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   gemini-balance:
-    image: ghcr.io/snailyp/gemini-balance:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: gemini-balance
     restart: unless-stopped
     ports:
@@ -19,11 +21,13 @@ services:
       - MYSQL_DATABASE=default_db
     volumes:
       - ./data:/app/data
+      # 挂载源码，支持实时开发调试
+      - .:/app
     depends_on:
       mysql:
         condition: service_healthy
     networks:
-      - gemini-network
+      - mem0-unified-network
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import requests; exit(0) if requests.get('http://localhost:8000/health').status_code == 200 else exit(1)\""]
       interval: 30s
@@ -45,7 +49,7 @@ services:
     ports:
       - "3306:3306"
     networks:
-      - gemini-network
+      - mem0-unified-network
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
@@ -54,8 +58,8 @@ services:
       start_period: 30s
 
 networks:
-  gemini-network:
-    driver: bridge
+  mem0-unified-network:
+    external: true
 
 volumes:
   mysql_data:

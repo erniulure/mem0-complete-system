@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mem0-unified-network
+    container_name: mem0-webui
     ports:
       - "8503:8503"
     environment:

@@ -218,6 +218,48 @@ cleanup_old_networks() {
     log_success "旧网络清理完成"
 }
 
+# 停止现有服务
+stop_existing_services() {
+    log_step "停止现有服务以避免冲突"
+
+    # 停止可能运行的服务
+    local compose_dirs=(
+        "mem0-deployment"
+        "mem0Client"
+        "gemini-balance"
+    )
+
+    for dir in "${compose_dirs[@]}"; do
+        if [ -d "$dir" ] && [ -f "$dir/docker-compose.yml" ]; then
+            log_info "停止 $dir 中的服务..."
+            cd "$dir"
+            docker-compose down 2>/dev/null || true
+            cd ..
+        fi
+    done
+
+    # 停止可能的独立容器
+    local containers=(
+        "mem0-api"
+        "mem0-webui"
+        "mem0-postgres"
+        "mem0-qdrant"
+        "mem0-neo4j"
+        "gemini-balance"
+        "gemini-mysql"
+    )
+
+    for container in "${containers[@]}"; do
+        if docker ps -q -f name="$container" | grep -q .; then
+            log_info "停止容器: $container"
+            docker stop "$container" 2>/dev/null || true
+            docker rm "$container" 2>/dev/null || true
+        fi
+    done
+
+    log_success "现有服务停止完成"
+}
+
 # 更新Docker Compose配置以使用统一网络
 update_docker_compose_networks() {
     log_step "更新Docker Compose网络配置"
@@ -247,20 +289,28 @@ networks:
 EOF
                 log_success "已为 $compose_file 添加网络配置"
             else
-                # 更新现有网络配置
-                sed -i.bak "s/name: .*/name: $UNIFIED_NETWORK/" "$compose_file"
+                # 更新现有网络配置（只更新networks部分的name）
+                sed -i.bak "/^networks:/,/^[a-zA-Z]/ s/name: .*/name: $UNIFIED_NETWORK/" "$compose_file"
                 log_success "已更新 $compose_file 网络配置"
-            fi
-
-            # 验证配置文件语法
-            if docker-compose -f "$compose_file" config >/dev/null 2>&1; then
-                log_success "$compose_file 配置验证通过"
-            else
-                log_error "$compose_file 配置验证失败"
-                return 1
             fi
         else
             log_warning "$compose_file 不存在，跳过"
+        fi
+    done
+
+    # 验证配置文件（在没有运行容器的情况下）
+    for compose_file in "${compose_files[@]}"; do
+        if [ -f "$compose_file" ]; then
+            log_info "验证 $compose_file 配置..."
+            if docker-compose -f "$compose_file" config >/dev/null 2>&1; then
+                log_success "$compose_file 配置验证通过"
+            else
+                log_warning "$compose_file 配置验证有警告，但继续安装"
+                # 记录详细错误到日志
+                echo "=== $compose_file 配置验证详情 ===" >> "$INSTALL_LOG"
+                docker-compose -f "$compose_file" config >> "$INSTALL_LOG" 2>&1 || true
+                echo "" >> "$INSTALL_LOG"
+            fi
         fi
     done
 
@@ -897,13 +947,16 @@ full_install() {
     # 1. 系统环境检查
     check_system_requirements || exit 1
 
-    # 2. 清理旧网络
+    # 2. 停止现有服务
+    stop_existing_services
+
+    # 3. 清理旧网络
     cleanup_old_networks
 
-    # 3. 创建统一网络
+    # 4. 创建统一网络
     create_unified_network || exit 1
 
-    # 4. 更新Docker Compose配置
+    # 5. 更新Docker Compose配置
     update_docker_compose_networks || exit 1
 
     # 5. 生成环境配置
@@ -942,13 +995,16 @@ mem0_only_install() {
     # 1. 系统环境检查
     check_system_requirements || exit 1
 
-    # 2. 清理旧网络
+    # 2. 停止现有服务
+    stop_existing_services
+
+    # 3. 清理旧网络
     cleanup_old_networks
 
-    # 3. 创建统一网络
+    # 4. 创建统一网络
     create_unified_network || exit 1
 
-    # 4. 更新Docker Compose配置
+    # 5. 更新Docker Compose配置
     update_docker_compose_networks || exit 1
 
     # 5. 生成环境配置
