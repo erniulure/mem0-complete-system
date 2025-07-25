@@ -26,6 +26,26 @@ from app.service.key.key_manager import KeyManager
 logger = get_openai_logger()
 
 
+def clean_unsupported_fields(obj):
+    """
+    递归地遍历字典或列表，并移除所有名为 'additionalProperties' 的键。
+    """
+    if isinstance(obj, dict):
+        # 使用 list(obj.keys()) 来创建一个副本，以便在遍历时可以安全地删除键
+        for key in list(obj.keys()):
+            if key == 'additionalProperties':
+                logger.info(f"[CLEAN] Removing unsupported field: {key}")
+                del obj[key]
+            else:
+                # 递归调用
+                clean_unsupported_fields(obj[key])
+    elif isinstance(obj, list):
+        for item in obj:
+            # 递归调用
+            clean_unsupported_fields(item)
+    return obj
+
+
 def _has_media_parts(messages: List[Dict[str, Any]]) -> bool:
     """判断消息是否包含多媒体部分"""
     for message in messages:
@@ -43,10 +63,10 @@ def _clean_json_schema_properties(obj: Any) -> Any:
     
     # Gemini API不支持的JSON Schema字段
     unsupported_fields = {
-        "exclusiveMaximum", "exclusiveMinimum", "const", "examples", 
+        "exclusiveMaximum", "exclusiveMinimum", "const", "examples",
         "contentEncoding", "contentMediaType", "if", "then", "else",
         "allOf", "anyOf", "oneOf", "not", "definitions", "$schema",
-        "$id", "$ref", "$comment", "readOnly", "writeOnly"
+        "$id", "$ref", "$comment", "readOnly", "writeOnly", "additionalProperties"
     }
     
     cleaned = {}
@@ -282,6 +302,11 @@ class OpenAIChatService:
         response = None
         
         try:
+            # 在发送请求前清理不支持的字段
+            logger.info("[OPENAI_CHAT] Cleaning payload before sending to API")
+            clean_unsupported_fields(payload)
+            logger.info("[OPENAI_CHAT] Payload cleaned successfully")
+
             response = await self.api_client.generate_content(payload, model, api_key)
             usage_metadata = response.get("usageMetadata", {})
             is_success = True
@@ -370,6 +395,12 @@ class OpenAIChatService:
                     logger.debug("Sent empty data chunk for fake stream heartbeat.")
 
         empty_data_generator = send_empty_data_locally()
+
+        # 在发送请求前清理不支持的字段
+        logger.info("[OPENAI_CHAT] Cleaning payload before sending to API (fake stream)")
+        clean_unsupported_fields(payload)
+        logger.info("[OPENAI_CHAT] Payload cleaned successfully (fake stream)")
+
         api_response_task = asyncio.create_task(
             self.api_client.generate_content(payload, model, api_key)
         )
@@ -417,6 +448,12 @@ class OpenAIChatService:
         """处理真实流式 (real stream) 的核心逻辑"""
         tool_call_flag = False
         usage_metadata = None
+
+        # 在发送请求前清理不支持的字段
+        logger.info("[OPENAI_CHAT] Cleaning payload before sending to API (real stream)")
+        clean_unsupported_fields(payload)
+        logger.info("[OPENAI_CHAT] Payload cleaned successfully (real stream)")
+
         async for line in self.api_client.stream_generate_content(
             payload, model, api_key
         ):

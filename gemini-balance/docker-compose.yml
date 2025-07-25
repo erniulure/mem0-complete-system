@@ -8,7 +8,7 @@ networks:
 
 services:
   gemini-balance:
-    image: ghcr.io/snailyp/gemini-balance:latest
+    build: .
     container_name: gemini-balance
     restart: unless-stopped
     ports:

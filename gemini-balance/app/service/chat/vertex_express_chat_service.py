@@ -19,6 +19,26 @@ from app.utils.helpers import redact_key_for_logging
 logger = get_gemini_logger()
 
 
+def clean_unsupported_fields(obj):
+    """
+    递归地遍历字典或列表，并移除所有名为 'additionalProperties' 的键。
+    """
+    if isinstance(obj, dict):
+        # 使用 list(obj.keys()) 来创建一个副本，以便在遍历时可以安全地删除键
+        for key in list(obj.keys()):
+            if key == 'additionalProperties':
+                logger.info(f"[VERTEX_CLEAN] Removing unsupported field: {key}")
+                del obj[key]
+            else:
+                # 递归调用
+                clean_unsupported_fields(obj[key])
+    elif isinstance(obj, list):
+        for item in obj:
+            # 递归调用
+            clean_unsupported_fields(item)
+    return obj
+
+
 def _has_image_parts(contents: List[Dict[str, Any]]) -> bool:
     """判断消息是否包含图片部分"""
     for content in contents:
@@ -237,6 +257,11 @@ class GeminiChatService:
         response = None
 
         try:
+            # 在发送请求前清理不支持的字段
+            logger.info("[VERTEX_CHAT] Cleaning payload before sending to API")
+            clean_unsupported_fields(payload)
+            logger.info("[VERTEX_CHAT] Payload cleaned successfully")
+
             response = await self.api_client.generate_content(payload, model, api_key)
             is_success = True
             status_code = 200
@@ -289,6 +314,11 @@ class GeminiChatService:
             current_attempt_key = api_key
             final_api_key = current_attempt_key # Update final key used
             try:
+                # 在发送请求前清理不支持的字段
+                logger.info("[VERTEX_CHAT] Cleaning payload before sending to API (stream)")
+                clean_unsupported_fields(payload)
+                logger.info("[VERTEX_CHAT] Payload cleaned successfully (stream)")
+
                 async for line in self.api_client.stream_generate_content(
                     payload, model, current_attempt_key
                 ):
