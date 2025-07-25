@@ -1,12 +1,5 @@
 -- WebUI数据库初始化脚本
--- 在同一个PostgreSQL实例中创建独立的webui数据库
-
--- 创建webui数据库（如果不存在）
-SELECT 'CREATE DATABASE webui'
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'webui')\gexec
-
--- 连接到webui数据库
-\c webui
+-- 在mem0数据库中创建WebUI相关表
 
 -- 创建WebUI用户设置表
 CREATE TABLE IF NOT EXISTS webui_user_settings (
@@ -125,7 +118,27 @@ BEGIN
     SELECT COUNT(*) INTO settings_count FROM webui_user_settings WHERE username = 'admin';
     SELECT COUNT(*) INTO config_count FROM webui_config;
 
+    -- 插入AI服务配置（确保一键安装后能正常连接）
+    INSERT INTO webui_user_settings (username, setting_key, setting_value)
+    SELECT 'admin', 'ai_api_url', 'http://gemini-balance:8000'
+    WHERE NOT EXISTS (
+        SELECT 1 FROM webui_user_settings WHERE username = 'admin' AND setting_key = 'ai_api_url'
+    );
+
+    INSERT INTO webui_user_settings (username, setting_key, setting_value)
+    SELECT 'admin', 'ai_api_key', 'q1q2q3q4'
+    WHERE NOT EXISTS (
+        SELECT 1 FROM webui_user_settings WHERE username = 'admin' AND setting_key = 'ai_api_key'
+    );
+
+    INSERT INTO webui_user_settings (username, setting_key, setting_value)
+    SELECT 'admin', 'ai_model', 'gemini-1.5-flash'
+    WHERE NOT EXISTS (
+        SELECT 1 FROM webui_user_settings WHERE username = 'admin' AND setting_key = 'ai_model'
+    );
+
     RAISE NOTICE '✅ WebUI数据库初始化完成';
     RAISE NOTICE '✅ 默认管理员WebUI设置已创建，配置项数: %', settings_count;
     RAISE NOTICE '✅ WebUI系统配置已创建，配置项数: %', config_count;
+    RAISE NOTICE '✅ AI服务配置已创建 (URL: http://gemini-balance:8000, Key: q1q2q3q4)';
 END $$;

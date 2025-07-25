@@ -42,23 +42,15 @@ class GeminiResponseHandler(ResponseHandler):
 def _handle_openai_stream_response(
     response: Dict[str, Any], model: str, finish_reason: str, usage_metadata: Optional[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    logger.info(f"[DEBUG] _handle_openai_stream_response called: model={model}, finish_reason={finish_reason}")
-
     text, reasoning_content, tool_calls, _ = _extract_result(
         response, model, stream=True, gemini_format=False
     )
-
-    logger.info(f"[DEBUG] _handle_openai_stream_response extracted: text_length={len(text)}, text_preview={text[:100]}...")
-    logger.info(f"[DEBUG] _handle_openai_stream_response: reasoning_content={reasoning_content}, tool_calls={tool_calls}")
-
     if not text and not tool_calls and not reasoning_content:
         delta = {}
-        logger.info(f"[DEBUG] _handle_openai_stream_response: Creating empty delta")
     else:
         delta = {"content": text, "reasoning_content": reasoning_content, "role": "assistant"}
         if tool_calls:
             delta["tool_calls"] = tool_calls
-        logger.info(f"[DEBUG] _handle_openai_stream_response: Created delta with content: {delta}")
     template_chunk = {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion.chunk",
@@ -170,13 +162,7 @@ def _extract_result(
     gemini_format: bool = False,
 ) -> tuple[str, Optional[str], List[Dict[str, Any]], Optional[bool]]:
     text, reasoning_content, tool_calls, thought = "", "", [], None
-
-    logger.info(f"[DEBUG] _extract_result called: stream={stream}, model={model}")
-    logger.info(f"[DEBUG] _extract_result response: {response}")
-
-    logger.info(f"[DEBUG] _extract_result called: stream={stream}, model={model}")
-    logger.info(f"[DEBUG] _extract_result response: {response}")
-
+    
     if stream:
         if response.get("candidates"):
             candidate = response["candidates"][0]
@@ -242,8 +228,7 @@ def _extract_result(
         else:
             logger.warning(f"No candidates found in response for model: {model}")
             text = "暂无返回"
-
-    logger.info(f"[DEBUG] _extract_result result: text_length={len(text)}, text_preview={text[:100]}...")
+    
     return text, reasoning_content, tool_calls, thought
 
 

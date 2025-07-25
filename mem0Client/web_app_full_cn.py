@@ -1863,8 +1863,9 @@ def memory_management_interface():
             height=120
         )
 
-    # 图片上传（如果选择了图片模式）
+    # 图片和文档上传（如果选择了图片模式）
     uploaded_image = None
+    uploaded_document = None
     if content_mode == "🖼️ 文字+图片记忆":
         st.markdown("---")
 

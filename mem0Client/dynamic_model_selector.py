@@ -11,14 +11,15 @@ import json
 import os
 from typing import Dict, List, Optional, Tuple
 import logging
+from database.webui_db_config import webui_db
 
 class DynamicModelSelector:
     """动态智能模型选择器"""
     
     def __init__(self, api_base_url: str = None, api_key: str = None):
-        # 使用Gemini Balance服务
-        self.api_base_url = api_base_url or 'http://gemini-balance:8000'
-        self.api_key = api_key or 'admin123'
+        # 从数据库获取配置，如果没有则使用默认值
+        self.api_base_url = api_base_url or self._get_api_url_from_db() or 'http://gemini-balance:8000'
+        self.api_key = api_key or self._get_api_key_from_db() or 'q1q2q3q4'
         self.available_models = []
         self.fast_model = None
         self.model_capabilities = {}
@@ -28,6 +29,24 @@ class DynamicModelSelector:
         # 初始化
         self._fetch_available_models()
         self._identify_fast_model()
+
+    def _get_api_url_from_db(self) -> str:
+        """从数据库获取AI API URL"""
+        try:
+            settings = webui_db.get_user_settings('admin')
+            return settings.get('ai_api_url', 'http://gemini-balance:8000')
+        except Exception as e:
+            logging.warning(f"从数据库获取API URL失败: {e}")
+            return 'http://gemini-balance:8000'
+
+    def _get_api_key_from_db(self) -> str:
+        """从数据库获取AI API Key"""
+        try:
+            settings = webui_db.get_user_settings('admin')
+            return settings.get('ai_api_key', 'q1q2q3q4')
+        except Exception as e:
+            logging.warning(f"从数据库获取API Key失败: {e}")
+            return 'q1q2q3q4'
     
     def _fetch_available_models(self) -> List[Dict]:
         """从API获取可用模型列表"""

@@ -6,7 +6,7 @@ import datetime
 import json
 from typing import Any, Dict, List, Type, get_args, get_origin
 
-from pydantic import ValidationError, ValidationInfo, field_validator
+from pydantic import ValidationError, ValidationInfo, field_validator, Field
 from pydantic_settings import BaseSettings
 from sqlalchemy import insert, select, update
 
@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     FILTERED_MODELS: List[str] = DEFAULT_FILTER_MODELS
     TOOLS_CODE_EXECUTION_ENABLED: bool = False
     # 是否启用网址上下文
-    URL_CONTEXT_ENABLED: bool = True
+    URL_CONTEXT_ENABLED: bool = False
     URL_CONTEXT_MODELS: List[str] = ["gemini-2.5-pro","gemini-2.5-flash","gemini-2.5-flash-lite","gemini-2.0-flash","gemini-2.0-flash-live-001"]
     SHOW_SEARCH_LINK: bool = True
     SHOW_THINKING_PROCESS: bool = True
@@ -130,6 +130,14 @@ class Settings(BaseSettings):
     FILES_CLEANUP_ENABLED: bool = True
     FILES_CLEANUP_INTERVAL_HOURS: int = 1
     FILES_USER_ISOLATION_ENABLED: bool = True
+
+    # Admin Session Configuration
+    ADMIN_SESSION_EXPIRE: int = Field(
+        default=3600,
+        ge=300,
+        le=86400,
+        description="Admin session expiration time in seconds (5 minutes to 24 hours)"
+    )
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

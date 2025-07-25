@@ -98,8 +98,41 @@ services:
       - mem0-qdrant
       - mem0-neo4j
 
-
-
+  # Mem0 Web UI 服务
+  mem0-webui:
+    build:
+      context: ../mem0Client
+      dockerfile: Dockerfile
+    container_name: mem0-webui
+    restart: unless-stopped
+    ports:
+      - "8503:8503"
+    environment:
+      - STREAMLIT_SERVER_PORT=8503
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      # 使用同一个PostgreSQL实例
+      - POSTGRES_HOST=mem0-postgres
+      - POSTGRES_DB=mem0
+      - POSTGRES_USER=mem0
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mem0_password}
+      - POSTGRES_PORT=5432
+      # API配置
+      - MEM0_API_URL=http://mem0-api:8000
+      - MEM0_API_KEY=${MEM0_API_KEY:-local_api_key}
+    volumes:
+      - ../mem0Client/data:/app/data
+      - ../mem0Client/logs:/app/logs
+      - ../mem0Client:/app
+    depends_on:
+      - mem0-api
+      - mem0-postgres
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8503/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   postgres_data:

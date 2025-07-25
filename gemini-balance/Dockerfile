@@ -2,14 +2,6 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# 安装系统依赖和调试工具
-RUN apt-get update && apt-get install -y \
-    curl \
-    wget \
-    net-tools \
-    iputils-ping \
-    && rm -rf /var/lib/apt/lists/*
-
 # 复制所需文件到容器中
 COPY ./requirements.txt /app
 COPY ./VERSION /app

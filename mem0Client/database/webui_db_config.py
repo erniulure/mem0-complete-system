@@ -14,13 +14,13 @@ class WebUIDatabase:
     
     def __init__(self):
         """初始化WebUI数据库连接"""
-        # 使用同一个PostgreSQL实例，但连接到webui数据库
+        # 使用同一个PostgreSQL实例和数据库，但使用独立的表前缀
         self.db_config = {
             'host': os.getenv('POSTGRES_HOST', 'mem0-postgres'),  # 使用同一个PostgreSQL实例
             'port': os.getenv('POSTGRES_PORT', '5432'),  # 使用同一个端口
-            'database': 'webui',  # 连接到webui数据库
+            'database': os.getenv('POSTGRES_DB', 'mem0'),  # 使用同一个数据库
             'user': os.getenv('POSTGRES_USER', 'mem0'),  # 使用同一个用户
-            'password': os.getenv('POSTGRES_PASSWORD', 'mem0_secure_password_2024')  # 使用同一个密码
+            'password': os.getenv('POSTGRES_PASSWORD', 'mem0_password')  # 使用同一个密码
         }
         
         # 初始化数据库表

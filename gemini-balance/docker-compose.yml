@@ -1,4 +1,10 @@
-version: '3.8'
+volumes:
+  mysql_data:
+
+networks:
+  default:
+    external: true
+    name: mem0-unified-network
 
 services:
   gemini-balance:
@@ -9,54 +15,31 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    environment:
-      # 确保MySQL配置正确传递
-      - DATABASE_TYPE=mysql
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_USER=gemini
-      - MYSQL_PASSWORD=change_me
-      - MYSQL_DATABASE=default_db
-    volumes:
-      - ./data:/app/data
     depends_on:
       mysql:
         condition: service_healthy
-    networks:
-      - gemini-network
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import requests; exit(0) if requests.get('http://localhost:8000/health').status_code == 200 else exit(1)\""]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 60s
-
+      start_period: 10s
   mysql:
-    image: mysql:8.0
+    image: mysql:8
     container_name: gemini-balance-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: default_db
-      MYSQL_USER: gemini
-      MYSQL_PASSWORD: change_me
+      MYSQL_ROOT_PASSWORD: your_root_password
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    # ports:
+    #   - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-    ports:
-      - "3306:3306"
-    networks:
-      - gemini-network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-networks:
-  gemini-network:
-    driver: bridge
-
-volumes:
-  mysql_data:
-    driver: local
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s # 每隔10秒检查一次
+      timeout: 5s   # 每次检查的超时时间为5秒
+      retries: 3    # 重试3次失败后标记为 unhealthy
+      start_period: 30s # 容器启动后等待30秒再开始第一次健康检查
