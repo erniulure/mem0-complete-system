@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "mem0-coding-preferences": {
+      "command": "docker",
+      "args": [
+        "run", 
+        "--rm", 
+        "-i", 
+        "--network", "host",
+        "mcp-mem0-stdio"
+      ],
+      "env": {
+        "TRANSPORT": "stdio",
+        "DEFAULT_USER_ID": "augment_user",
+        "MEM0_API_URL": "http://localhost:8888"
+      }
+    }
+  }
+}

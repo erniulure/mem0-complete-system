@@ -48,7 +48,7 @@ check_requirements() {
     fi
     
     # 检查Docker Compose
-    if ! command -v docker-compose &> /dev/null; then
+    if ! docker compose version &> /dev/null; then
         log_error "Docker Compose未安装，请先安装Docker Compose"
         exit 1
     fi
@@ -63,15 +63,15 @@ clean_environment() {
     # 停止可能运行的服务
     log_info "停止现有服务..."
     cd mem0-deployment
-    docker-compose down -v 2>/dev/null || true
+    docker compose down -v 2>/dev/null || true
     cd ..
-    
+
     cd mem0Client
-    docker-compose down -v 2>/dev/null || true
+    docker compose down -v 2>/dev/null || true
     cd ..
-    
+
     cd gemini-balance
-    docker-compose down -v 2>/dev/null || true
+    docker compose down -v 2>/dev/null || true
     cd ..
     
     # 清理相关容器
@@ -157,7 +157,7 @@ EOF
 
     # 启动Gemini Balance
     log_info "启动Gemini Balance..."
-    docker-compose up -d
+    docker compose up -d
     
     # 等待服务启动
     log_info "等待Gemini Balance启动..."
@@ -183,7 +183,7 @@ install_unified_mem0() {
     
     # 启动所有服务
     log_info "启动所有Mem0服务..."
-    docker-compose up -d
+    docker compose up -d
     
     # 等待服务启动
     log_info "等待服务启动..."
@@ -324,8 +324,8 @@ show_completion() {
     echo "管理命令："
     echo "  查看状态: docker ps"
     echo "  查看日志: docker logs <容器名>"
-    echo "  停止服务: cd mem0-deployment && docker-compose down"
-    echo "  重启服务: cd mem0-deployment && docker-compose restart"
+    echo "  停止服务: cd mem0-deployment && docker compose down"
+    echo "  重启服务: cd mem0-deployment && docker compose restart"
     echo ""
     echo "特点："
     echo "  ✅ 所有服务统一管理"

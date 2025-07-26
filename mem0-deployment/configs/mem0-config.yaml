@@ -20,10 +20,10 @@ vector_store:
     port: 6333
     embedding_model_dims: 3072  # gemini-embedding-001 最佳性能维度
 
-# 临时注释掉图数据库配置，因为Function Calling有兼容性问题
-# graph_store:
-#   provider: neo4j
-#   config:
-#     url: bolt://mem0-neo4j:7687
-#     username: neo4j
-#     password: password
+# 启用图数据库配置，用于存储记忆关系
+graph_store:
+  provider: neo4j
+  config:
+    url: bolt://mem0-neo4j:7687
+    username: neo4j
+    password: password
