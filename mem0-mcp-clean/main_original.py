@@ -5,51 +5,18 @@ from starlette.requests import Request
 from starlette.routing import Mount, Route
 from mcp.server import Server
 import uvicorn
-import httpx
+from mem0 import MemoryClient
 from dotenv import load_dotenv
 import json
-import os
 
 load_dotenv()
 
 # Initialize FastMCP server for mem0 tools
 mcp = FastMCP("mem0-mcp")
 
-# HTTP client for our deployed Mem0 API
-class Mem0HTTPClient:
-    def __init__(self, base_url: str):
-        self.base_url = base_url.rstrip('/')
-        self.client = httpx.AsyncClient(timeout=30.0)
-
-    async def add(self, messages, user_id: str, output_format: str = "v1.1"):
-        url = f"{self.base_url}/memories"
-        payload = {"messages": messages, "user_id": user_id}
-        response = await self.client.post(url, json=payload)
-        response.raise_for_status()
-        return response.json()
-
-    async def get_all(self, user_id: str, page: int = 1, page_size: int = 50):
-        url = f"{self.base_url}/memories"
-        params = {"user_id": user_id}
-        response = await self.client.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
-
-    async def search(self, query: str, user_id: str, output_format: str = "v1.1"):
-        url = f"{self.base_url}/search"
-        payload = {"query": query, "user_id": user_id}
-        response = await self.client.post(url, json=payload)
-        response.raise_for_status()
-        return response.json()
-
-    def update_project(self, custom_instructions: str):
-        # This is a no-op for HTTP client
-        pass
-
-# Initialize mem0 HTTP client and set default user
-mem0_api_url = os.getenv('MEM0_API_URL', 'http://localhost:8888')
-mem0_client = Mem0HTTPClient(mem0_api_url)
-DEFAULT_USER_ID = os.getenv("DEFAULT_USER_ID", "admin_default")
+# Initialize mem0 client and set default user
+mem0_client = MemoryClient()
+DEFAULT_USER_ID = "cursor_mcp"
 CUSTOM_INSTRUCTIONS = """
 Extract the Following Information:  
 
@@ -91,7 +58,7 @@ async def add_coding_preference(text: str) -> str:
     """
     try:
         messages = [{"role": "user", "content": text}]
-        await mem0_client.add(messages, user_id=DEFAULT_USER_ID, output_format="v1.1")
+        mem0_client.add(messages, user_id=DEFAULT_USER_ID, output_format="v1.1")
         return f"Successfully added preference: {text}"
     except Exception as e:
         return f"Error adding preference: {str(e)}"
@@ -121,10 +88,8 @@ async def get_all_coding_preferences() -> str:
     Each preference includes metadata about when it was created and its content type.
     """
     try:
-        memories = await mem0_client.get_all(user_id=DEFAULT_USER_ID, page=1, page_size=50)
-        # Handle the nested results structure: {"results": {"results": [], "relations": []}}
-        results = memories.get("results", {}).get("results", [])
-        flattened_memories = [memory.get("memory", memory) for memory in results]
+        memories = mem0_client.get_all(user_id=DEFAULT_USER_ID, page=1, page_size=50)
+        flattened_memories = [memory["memory"] for memory in memories["results"]]
         return json.dumps(flattened_memories, indent=2)
     except Exception as e:
         return f"Error getting preferences: {str(e)}"
@@ -156,10 +121,8 @@ async def search_coding_preferences(query: str) -> str:
               or specific technical terms.
     """
     try:
-        memories = await mem0_client.search(query, user_id=DEFAULT_USER_ID, output_format="v1.1")
-        # Handle the nested results structure: {"results": {"results": [], "relations": []}}
-        results = memories.get("results", {}).get("results", [])
-        flattened_memories = [memory.get("memory", memory) for memory in results]
+        memories = mem0_client.search(query, user_id=DEFAULT_USER_ID, output_format="v1.1")
+        flattened_memories = [memory["memory"] for memory in memories["results"]]
         return json.dumps(flattened_memories, indent=2)
     except Exception as e:
         return f"Error searching preferences: {str(e)}"
@@ -191,32 +154,15 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
 
 if __name__ == "__main__":
     mcp_server = mcp._mcp_server
-    transport_mode = os.getenv('TRANSPORT', 'sse')
 
-    if transport_mode == 'stdio':
-        # Stdio mode - for direct JSON configuration
-        import asyncio
-        from mcp.server.stdio import stdio_server
+    import argparse
 
-        async def main():
-            async with stdio_server() as (read_stream, write_stream):
-                await mcp_server.run(
-                    read_stream,
-                    write_stream,
-                    mcp_server.create_initialization_options(),
-                )
+    parser = argparse.ArgumentParser(description='Run MCP SSE-based server')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
+    parser.add_argument('--port', type=int, default=8080, help='Port to listen on')
+    args = parser.parse_args()
 
-        asyncio.run(main())
-    else:
-        # SSE mode - for web-based transport
-        import argparse
+    # Bind SSE request handling to MCP server
+    starlette_app = create_starlette_app(mcp_server, debug=True)
 
-        parser = argparse.ArgumentParser(description='Run MCP SSE-based server')
-        parser.add_argument('--host', default=os.getenv('HOST', '0.0.0.0'), help='Host to bind to')
-        parser.add_argument('--port', type=int, default=int(os.getenv('PORT', '8051')), help='Port to listen on')
-        args = parser.parse_args()
-
-        # Bind SSE request handling to MCP server
-        starlette_app = create_starlette_app(mcp_server, debug=True)
-
-        uvicorn.run(starlette_app, host=args.host, port=args.port)
+    uvicorn.run(starlette_app, host=args.host, port=args.port)

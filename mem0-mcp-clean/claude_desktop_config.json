@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "mem0-coding-preferences": {
+      "command": "python",
+      "args": ["/opt/mem0-complete-system/mem0-mcp-clean/main_working.py"],
+      "env": {
+        "PYTHONPATH": "/opt/mem0-complete-system/mem0-mcp-clean/.venv/lib/python3.12/site-packages",
+        "PATH": "/opt/mem0-complete-system/mem0-mcp-clean/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      }
+    }
+  }
+}

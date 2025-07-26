@@ -1,0 +1,22 @@
+{
+  "mcp_servers": [
+    {
+      "name": "mem0-coding-preferences",
+      "url": "http://192.168.8.225:8082/sse",
+      "headers": {
+        "X-User-ID": "your_user_id_here"
+      },
+      "description": "MCP-Mem0 coding preferences server with user isolation",
+      "tools": [
+        "add_coding_preference",
+        "get_all_coding_preferences",
+        "search_coding_preferences"
+      ]
+    }
+  ],
+  "connection": {
+    "timeout": 30,
+    "retry_attempts": 3,
+    "retry_delay": 5
+  }
+}
