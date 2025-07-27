@@ -10,6 +10,218 @@ import json
 import os
 from datetime import datetime
 from streamlit_chat_prompt import prompt
+import threading
+import time
+import logging
+from typing import Dict, List, Optional
+import re
+
+class EnhancedStatusIndicator:
+    """增强的状态指示器 - 提供更好的用户体验"""
+
+    @staticmethod
+    def show_memory_search_progress():
+        """显示记忆搜索进度"""
+        progress_container = st.empty()
+
+        # 模拟搜索进度
+        search_steps = [
+            "🔍 正在搜索相关记忆...",
+            "📚 分析历史对话内容...",
+            "🧠 匹配语义相关信息...",
+            "✨ 构建智能上下文..."
+        ]
+
+        for i, step in enumerate(search_steps):
+            progress_container.info(f"{step} ({i+1}/{len(search_steps)})")
+            time.sleep(0.3)  # 短暂延迟显示进度
+
+        progress_container.empty()
+
+    @staticmethod
+    def show_ai_thinking_animation():
+        """显示AI思考动画"""
+        thinking_container = st.empty()
+
+        thinking_frames = [
+            "🤖 AI正在思考中.",
+            "🤖 AI正在思考中..",
+            "🤖 AI正在思考中...",
+            "🧠 分析问题内容.",
+            "🧠 分析问题内容..",
+            "🧠 分析问题内容...",
+            "⚡ 生成智能回复.",
+            "⚡ 生成智能回复..",
+            "⚡ 生成智能回复..."
+        ]
+
+        for frame in thinking_frames:
+            thinking_container.info(frame)
+            time.sleep(0.2)
+
+        return thinking_container
+
+    @staticmethod
+    def show_memory_storage_progress():
+        """显示记忆存储进度"""
+        storage_steps = [
+            "🔍 分析对话重要性...",
+            "📝 提取关键信息...",
+            "🧠 生成记忆向量...",
+            "💾 存储到记忆库...",
+            "✅ 记忆存储完成"
+        ]
+
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        for i, step in enumerate(storage_steps):
+            progress = (i + 1) / len(storage_steps)
+            progress_bar.progress(progress)
+            status_text.info(f"{step} ({int(progress * 100)}%)")
+            time.sleep(0.5)
+
+        return status_text, progress_bar
+
+class StreamingResponseHandler:
+    """流式响应处理器 - 处理AI API的流式响应"""
+
+    @staticmethod
+    def parse_sse_line(line: str) -> Dict:
+        """解析Server-Sent Events格式的数据行"""
+        if line.startswith('data: '):
+            data_content = line[6:]  # 移除'data: '前缀
+            if data_content.strip() == '[DONE]':
+                return {'done': True}
+            try:
+                import json
+                return json.loads(data_content)
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+    @staticmethod
+    def stream_ai_response(url: str, payload: Dict, headers: Dict, timeout: int = 30):
+        """发送流式AI请求并逐步返回响应内容"""
+        # 启用流式响应
+        payload['stream'] = True
+
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout, stream=True)
+
+            if response.status_code != 200:
+                yield f"❌ API调用失败: {response.status_code} - {response.text}"
+                return
+
+            accumulated_content = ""
+
+            # 逐行读取流式响应
+            for line in response.iter_lines(decode_unicode=True):
+                if line:
+                    parsed_data = StreamingResponseHandler.parse_sse_line(line)
+
+                    if parsed_data.get('done'):
+                        break
+
+                    # 提取增量内容
+                    choices = parsed_data.get('choices', [])
+                    if choices:
+                        delta = choices[0].get('delta', {})
+                        content = delta.get('content', '')
+
+                        if content:
+                            accumulated_content += content
+                            yield accumulated_content
+
+            # 如果没有收到任何内容，返回默认消息
+            if not accumulated_content:
+                yield "抱歉，我无法处理您的请求。"
+
+        except Exception as e:
+            yield f"❌ 处理流式响应时出错: {str(e)}"
+
+class AsyncMemoryProcessor:
+    """异步记忆处理器 - 在后台处理记忆存储任务"""
+
+    def __init__(self):
+        self.processing_thread = None
+        self.is_running = False
+
+    def start_background_processor(self):
+        """启动后台记忆处理线程"""
+        if not self.is_running:
+            self.is_running = True
+            self.processing_thread = threading.Thread(target=self._process_memory_tasks, daemon=True)
+            self.processing_thread.start()
+
+    def _process_memory_tasks(self):
+        """后台处理记忆存储任务"""
+        while self.is_running:
+            try:
+                # 检查是否有待处理的记忆任务
+                if 'async_memory_tasks' in st.session_state:
+                    pending_tasks = [task for task in st.session_state.async_memory_tasks if task['status'] == 'pending']
+
+                    for task in pending_tasks:
+                        try:
+                            # 标记任务为处理中
+                            task['status'] = 'processing'
+
+                            # 获取记忆管理器
+                            if 'memory_manager' in st.session_state:
+                                memory_manager = st.session_state.memory_manager
+
+                                # 执行记忆存储
+                                result = memory_manager.intelligent_store_memory_sync(
+                                    task['user_text'],
+                                    task['ai_response']
+                                )
+
+                                # 更新任务状态
+                                task['status'] = 'completed'
+                                task['result'] = result
+
+                                # 更新对应的聊天记录
+                                chat_index = task['chat_index']
+                                if (chat_index < len(st.session_state.chat_history) and
+                                    st.session_state.chat_history[chat_index]['role'] == 'assistant'):
+                                    st.session_state.chat_history[chat_index]['memory_status'] = 'completed'
+                                    st.session_state.chat_history[chat_index]['memory_storage'] = result
+
+                            else:
+                                task['status'] = 'failed'
+                                task['error'] = 'Memory manager not available'
+
+                        except Exception as e:
+                            task['status'] = 'failed'
+                            task['error'] = str(e)
+                            logging.error(f"异步记忆存储失败: {e}")
+
+                            # 更新聊天记录状态
+                            chat_index = task['chat_index']
+                            if (chat_index < len(st.session_state.chat_history) and
+                                st.session_state.chat_history[chat_index]['role'] == 'assistant'):
+                                st.session_state.chat_history[chat_index]['memory_status'] = 'failed'
+
+                # 清理完成的任务（保留最近10个）
+                if 'async_memory_tasks' in st.session_state:
+                    completed_tasks = [task for task in st.session_state.async_memory_tasks if task['status'] in ['completed', 'failed']]
+                    if len(completed_tasks) > 10:
+                        # 只保留最近的10个完成任务
+                        st.session_state.async_memory_tasks = [
+                            task for task in st.session_state.async_memory_tasks
+                            if task['status'] == 'pending' or task in completed_tasks[-10:]
+                        ]
+
+            except Exception as e:
+                logging.error(f"异步记忆处理器错误: {e}")
+
+            # 每秒检查一次
+            time.sleep(1)
+
+    def stop(self):
+        """停止后台处理器"""
+        self.is_running = False
 
 class SimpleImageProcessor:
     """简单的图片处理器备用类"""
@@ -115,14 +327,21 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         )
 
         if not should_skip_memory:
-            with st.spinner("🧠 正在回忆相关信息..."):
-                # 🔍 搜索相关记忆（使用同步版本）
-                relevant_memories = memory_manager.search_relevant_memories_sync(user_text, limit=5)
+            # 🎯 使用增强的状态指示器
+            search_progress = st.empty()
+            search_progress.info("🔍 正在搜索相关记忆...")
 
-                # 📝 构建增强的上下文
-                enhanced_user_input = memory_manager.build_context_with_memories(
-                    user_text, relevant_memories, {'needs_memory': True, 'confidence': 1.0}
-                )
+            # 🔍 搜索相关记忆（使用同步版本）
+            relevant_memories = memory_manager.search_relevant_memories_sync(user_text, limit=5)
+
+            search_progress.success(f"✅ 找到 {len(relevant_memories)} 条相关记忆")
+            time.sleep(0.5)  # 短暂显示结果
+            search_progress.empty()
+
+            # 📝 构建增强的上下文
+            enhanced_user_input = memory_manager.build_context_with_memories(
+                user_text, relevant_memories, {'needs_memory': True, 'confidence': 1.0}
+            )
         else:
             enhanced_user_input = user_text
             relevant_memories = []
@@ -223,53 +442,146 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
             "Content-Type": "application/json"
         }
 
-        response = requests.post(
-            f"{gemini_balance_url}/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=30
-        )
+        # 🚀 流式AI响应实现 - 使用真正的流式API
+        ai_response = ""
 
-        if response.status_code != 200:
-            raise Exception(f"Gemini Balance API调用失败: {response.status_code} - {response.text}")
+        # 🎯 显示增强的AI思考状态
+        thinking_status = st.empty()
+        thinking_status.info("🧠 AI正在分析您的问题...")
 
-        result = response.json()
-        ai_response = result.get("choices", [{}])[0].get("message", {}).get("content", "抱歉，我无法处理您的请求。")
+        # 先添加一个占位符到聊天历史
+        placeholder_index = len(st.session_state.chat_history)
+        st.session_state.chat_history.append({
+            "role": "assistant",
+            "content": "⚡ 正在生成回复...",
+            "timestamp": st.session_state.get('current_time', ''),
+            "model": model_info.get('selected_model', 'unknown'),
+            "memory_status": "pending",
+            "streaming": True,
+            "generation_stage": "thinking"
+        })
 
-        # 🧠 智能记忆存储：AI自动判断是否存储对话
-        memory_storage_result = None
+        # 使用流式API获取回复
         try:
-            with st.spinner("🧠 AI正在分析是否需要记住这次对话..."):
-                memory_storage_result = memory_manager.intelligent_store_memory_sync(
-                    user_text, ai_response
-                )
+            # 启用流式响应
+            payload['stream'] = True
 
-                # 显示记忆存储状态（可选）
-                if memory_storage_result['stored']:
-                    st.success(f"✅ {memory_storage_result['reason']}")
-                elif memory_storage_result['confidence'] > 0.2:
-                    st.info(f"ℹ️ {memory_storage_result['reason']}")
+            response = requests.post(
+                f"{gemini_balance_url}/chat/completions",
+                json=payload,
+                headers=headers,
+                timeout=30,
+                stream=True
+            )
+
+            if response.status_code != 200:
+                raise Exception(f"Gemini Balance API调用失败: {response.status_code} - {response.text}")
+
+            accumulated_content = ""
+            first_content_received = False
+
+            # 更新状态：开始接收流式响应
+            thinking_status.info("📡 正在接收AI回复...")
+
+            # 处理流式响应
+            for line in response.iter_lines(decode_unicode=True):
+                if line and line.startswith('data: '):
+                    data_content = line[6:]  # 移除'data: '前缀
+
+                    if data_content.strip() == '[DONE]':
+                        break
+
+                    try:
+                        import json
+                        parsed_data = json.loads(data_content)
+                        choices = parsed_data.get('choices', [])
+
+                        if choices:
+                            delta = choices[0].get('delta', {})
+                            content = delta.get('content', '')
+
+                            if content:
+                                accumulated_content += content
+
+                                # 第一次收到内容时更新状态
+                                if not first_content_received:
+                                    thinking_status.success("✨ 开始生成回复...")
+                                    first_content_received = True
+
+                                # 更新聊天历史中的消息
+                                st.session_state.chat_history[placeholder_index]["content"] = accumulated_content
+                                st.session_state.chat_history[placeholder_index]["streaming"] = True
+                                st.session_state.chat_history[placeholder_index]["generation_stage"] = "streaming"
+
+                    except json.JSONDecodeError:
+                        continue
+
+            ai_response = accumulated_content if accumulated_content else "抱歉，我无法处理您的请求。"
+
+            # 完成流式响应，更新最终状态
+            thinking_status.success("🎉 AI回复生成完成！")
+            time.sleep(0.5)
+            thinking_status.empty()
+
+            st.session_state.chat_history[placeholder_index]["content"] = ai_response
+            st.session_state.chat_history[placeholder_index]["streaming"] = False
+            st.session_state.chat_history[placeholder_index]["memory_status"] = "processing"
+            st.session_state.chat_history[placeholder_index]["generation_stage"] = "completed"
+
+        except Exception as e:
+            ai_response = f"❌ 获取AI回复时出错: {str(e)}"
+            # 更新错误状态
+            thinking_status.error(f"❌ AI回复生成失败: {str(e)}")
+            time.sleep(1)
+            thinking_status.empty()
+
+            # 更新错误消息
+            st.session_state.chat_history[placeholder_index]["content"] = ai_response
+            st.session_state.chat_history[placeholder_index]["streaming"] = False
+            st.session_state.chat_history[placeholder_index]["memory_status"] = "failed"
+            st.session_state.chat_history[placeholder_index]["generation_stage"] = "failed"
+
+        # 🧠 智能记忆存储：异步处理，不阻塞用户界面
+        memory_storage_result = None
+
+        # AI回复已通过流式响应添加到聊天历史，现在启动异步记忆存储
+
+        # 异步启动记忆存储任务
+        try:
+            # 使用session state来跟踪异步任务
+            if 'async_memory_tasks' not in st.session_state:
+                st.session_state.async_memory_tasks = []
+
+            # 创建异步任务信息
+            task_info = {
+                'user_text': user_text,
+                'ai_response': ai_response,
+                'chat_index': len(st.session_state.chat_history) - 1,  # 记录对应的聊天记录索引
+                'status': 'pending',
+                'timestamp': datetime.now()
+            }
+            st.session_state.async_memory_tasks.append(task_info)
+
+            # 显示增强的后台处理提示
+            memory_status = st.empty()
+            memory_status.info("🧠 启动智能记忆存储...")
+            time.sleep(0.3)
+            memory_status.success("✅ 记忆存储任务已加入队列，正在后台处理")
+            time.sleep(1)
+            memory_status.empty()
 
         except Exception as memory_error:
             # 记忆存储失败不影响对话功能
-            print(f"智能记忆存储失败: {memory_error}")
-            memory_storage_result = {
-                'stored': False,
-                'reason': f"存储失败: {str(memory_error)}",
-                'value_level': 'unknown',
-                'confidence': 0.0
-            }
+            print(f"启动异步记忆存储失败: {memory_error}")
+            # 更新聊天记录中的记忆状态
+            if st.session_state.chat_history:
+                st.session_state.chat_history[-1]["memory_status"] = "failed"
 
-        # 添加AI回复到聊天历史（包含记忆信息）
-        assistant_message = {
-            "role": "assistant",
-            "content": ai_response,
-            "timestamp": st.session_state.get('current_time', ''),
-            "model": model_info.get('selected_model', 'unknown'),
-            "memory_storage": memory_storage_result,
-            "used_memories": len(relevant_memories) if relevant_memories else 0
-        }
-        st.session_state.chat_history.append(assistant_message)
+        # AI回复已在上面的异步处理中添加到聊天历史
+        # 更新最后一条消息的记忆信息
+        if st.session_state.chat_history:
+            last_message = st.session_state.chat_history[-1]
+            last_message["used_memories"] = len(relevant_memories) if relevant_memories else 0
 
         # 更新学习状态
         st.session_state.learning_state = "active"
@@ -316,6 +628,56 @@ def modern_smart_chat_interface():
     st.header("🧠 智能对话 - AI记忆学习中心")
     st.markdown("与AI助手对话，观察AI如何自动学习和记忆您的偏好")
 
+    # 添加自定义CSS样式
+    st.markdown("""
+    <style>
+    .status-indicator {
+        padding: 8px 12px;
+        border-radius: 6px;
+        margin: 4px 0;
+        font-size: 0.9em;
+        animation: pulse 2s infinite;
+    }
+
+    .status-thinking {
+        background: linear-gradient(45deg, #e3f2fd, #bbdefb);
+        border-left: 4px solid #2196f3;
+    }
+
+    .status-streaming {
+        background: linear-gradient(45deg, #f3e5f5, #e1bee7);
+        border-left: 4px solid #9c27b0;
+    }
+
+    .status-memory {
+        background: linear-gradient(45deg, #e8f5e8, #c8e6c9);
+        border-left: 4px solid #4caf50;
+    }
+
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.7; }
+        100% { opacity: 1; }
+    }
+
+    .progress-container {
+        background: #f5f5f5;
+        border-radius: 10px;
+        padding: 10px;
+        margin: 8px 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # 初始化异步记忆处理器
+    if 'async_memory_processor' not in st.session_state:
+        st.session_state.async_memory_processor = AsyncMemoryProcessor()
+        st.session_state.async_memory_processor.start_background_processor()
+
+    # 初始化异步任务列表
+    if 'async_memory_tasks' not in st.session_state:
+        st.session_state.async_memory_tasks = []
+
     # 创建左右分列布局
     chat_col, memory_col = st.columns([2, 1])
 
@@ -335,9 +697,53 @@ def modern_smart_chat_interface():
                         model_info = message['model_info']
                         st.caption(f"🤖 使用模型: {model_info.get('selected_model', 'unknown')}")
                 else:
+                    # 显示AI回复内容
                     st.write(message['content'])
+
+                    # 显示模型信息
                     if 'model' in message:
                         st.caption(f"🤖 模型: {message['model']}")
+
+                    # 显示生成阶段状态
+                    if 'generation_stage' in message:
+                        stage = message['generation_stage']
+                        if stage == 'thinking':
+                            st.caption("🧠 AI正在思考...")
+                        elif stage == 'streaming':
+                            st.caption("⚡ 正在生成回复...")
+                        elif stage == 'completed':
+                            st.caption("✨ 回复生成完成")
+                        elif stage == 'failed':
+                            st.caption("❌ 生成失败")
+
+                    # 显示流式响应状态（向后兼容）
+                    elif message.get('streaming', False):
+                        st.caption("⚡ 正在生成回复...")
+
+                    # 显示记忆处理状态
+                    if 'memory_status' in message:
+                        status = message['memory_status']
+                        if status == 'pending':
+                            st.caption("⏳ 准备存储记忆...")
+                        elif status == 'processing':
+                            st.caption("💭 记忆存储中...")
+                        elif status == 'completed':
+                            if 'memory_storage' in message and message['memory_storage']:
+                                result = message['memory_storage']
+                                if result.get('stored'):
+                                    st.caption(f"✅ {result.get('reason', '记忆已存储')}")
+                                else:
+                                    st.caption(f"ℹ️ {result.get('reason', '未存储记忆')}")
+                        elif status == 'failed':
+                            st.caption("⚠️ 记忆存储失败")
+
+                    # 显示使用的记忆数量
+                    if 'used_memories' in message and message['used_memories'] > 0:
+                        st.caption(f"🧠 使用了 {message['used_memories']} 条相关记忆")
+
+                    # 显示响应时间标记（如果有）
+                    if 'response_time' in message:
+                        st.caption(f"⚡ {message['response_time']}")
 
         # 现代化聊天输入组件 - 支持Enter发送，Shift+Enter换行，剪贴板粘贴
         prompt_result = prompt(
@@ -392,9 +798,44 @@ def modern_smart_chat_interface():
         st.subheader("🧠 AI记忆学习")
         display_real_time_memory_learning()
 
+        # 自动刷新机制 - 如果有活跃的记忆任务，每3秒刷新一次
+        if 'async_memory_tasks' in st.session_state:
+            active_tasks = [task for task in st.session_state.async_memory_tasks
+                          if task['status'] in ['pending', 'processing']]
+            if active_tasks:
+                # 使用JavaScript自动刷新
+                st.markdown("""
+                <script>
+                setTimeout(function() {
+                    window.parent.document.querySelector('[data-testid="stAppViewContainer"]').dispatchEvent(
+                        new KeyboardEvent('keydown', {key: 'r', ctrlKey: true})
+                    );
+                }, 3000);
+                </script>
+                """, unsafe_allow_html=True)
+
 def display_real_time_memory_learning():
     """显示AI实时记忆学习过程"""
-    
+
+    # 显示异步记忆处理状态
+    if 'async_memory_tasks' in st.session_state:
+        pending_tasks = [task for task in st.session_state.async_memory_tasks if task['status'] == 'pending']
+        processing_tasks = [task for task in st.session_state.async_memory_tasks if task['status'] == 'processing']
+
+        if pending_tasks or processing_tasks:
+            st.markdown("### ⚡ 记忆处理状态")
+            total_active = len(pending_tasks) + len(processing_tasks)
+
+            if processing_tasks:
+                st.info(f"🧠 正在处理 {len(processing_tasks)} 个记忆任务...")
+                # 显示处理进度
+                for i, task in enumerate(processing_tasks[:3]):  # 最多显示3个
+                    elapsed = (datetime.now() - task['timestamp']).total_seconds()
+                    st.caption(f"任务 {i+1}: 已处理 {elapsed:.1f}秒")
+
+            if pending_tasks:
+                st.caption(f"📝 队列中还有 {len(pending_tasks)} 个任务等待处理")
+
     # 获取最近学习的记忆
     if 'recent_memories' not in st.session_state:
         st.session_state.recent_memories = []
