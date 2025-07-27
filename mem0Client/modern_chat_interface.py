@@ -544,38 +544,40 @@ def handle_modern_chat_message(user_text: str, image_info: dict = None):
         # 🧠 智能记忆存储：异步处理，不阻塞用户界面
         memory_storage_result = None
 
-        # AI回复已通过流式响应添加到聊天历史，现在启动异步记忆存储
+        # AI回复已通过流式响应添加到聊天历史，现在进行记忆存储
 
-        # 异步启动记忆存储任务
+        # 🧠 智能记忆存储：快速处理，优化用户体验
         try:
-            # 使用session state来跟踪异步任务
-            if 'async_memory_tasks' not in st.session_state:
-                st.session_state.async_memory_tasks = []
-
-            # 创建异步任务信息
-            task_info = {
-                'user_text': user_text,
-                'ai_response': ai_response,
-                'chat_index': len(st.session_state.chat_history) - 1,  # 记录对应的聊天记录索引
-                'status': 'pending',
-                'timestamp': datetime.now()
-            }
-            st.session_state.async_memory_tasks.append(task_info)
-
-            # 显示增强的后台处理提示
+            # 显示记忆存储状态
             memory_status = st.empty()
-            memory_status.info("🧠 启动智能记忆存储...")
-            time.sleep(0.3)
-            memory_status.success("✅ 记忆存储任务已加入队列，正在后台处理")
-            time.sleep(1)
+            memory_status.info("🧠 正在存储记忆...")
+
+            # 直接进行记忆存储（同步，但快速）
+            memory_storage_result = memory_manager.intelligent_store_memory_sync(
+                user_text, ai_response
+            )
+
+            # 更新聊天记录中的记忆状态
+            if st.session_state.chat_history:
+                st.session_state.chat_history[-1]["memory_status"] = "completed"
+                st.session_state.chat_history[-1]["memory_storage"] = memory_storage_result
+
+            # 显示成功状态
+            memory_status.success("✅ 记忆存储完成")
+            time.sleep(0.5)
             memory_status.empty()
 
         except Exception as memory_error:
             # 记忆存储失败不影响对话功能
-            print(f"启动异步记忆存储失败: {memory_error}")
+            print(f"记忆存储失败: {memory_error}")
             # 更新聊天记录中的记忆状态
             if st.session_state.chat_history:
                 st.session_state.chat_history[-1]["memory_status"] = "failed"
+
+            # 显示错误状态
+            memory_status.error("❌ 记忆存储失败")
+            time.sleep(1)
+            memory_status.empty()
 
         # AI回复已在上面的异步处理中添加到聊天历史
         # 更新最后一条消息的记忆信息
@@ -669,14 +671,7 @@ def modern_smart_chat_interface():
     </style>
     """, unsafe_allow_html=True)
 
-    # 初始化异步记忆处理器
-    if 'async_memory_processor' not in st.session_state:
-        st.session_state.async_memory_processor = AsyncMemoryProcessor()
-        st.session_state.async_memory_processor.start_background_processor()
-
-    # 初始化异步任务列表
-    if 'async_memory_tasks' not in st.session_state:
-        st.session_state.async_memory_tasks = []
+    # 记忆存储已改为同步处理，无需异步处理器
 
     # 创建左右分列布局
     chat_col, memory_col = st.columns([2, 1])
@@ -817,24 +812,7 @@ def modern_smart_chat_interface():
 def display_real_time_memory_learning():
     """显示AI实时记忆学习过程"""
 
-    # 显示异步记忆处理状态
-    if 'async_memory_tasks' in st.session_state:
-        pending_tasks = [task for task in st.session_state.async_memory_tasks if task['status'] == 'pending']
-        processing_tasks = [task for task in st.session_state.async_memory_tasks if task['status'] == 'processing']
-
-        if pending_tasks or processing_tasks:
-            st.markdown("### ⚡ 记忆处理状态")
-            total_active = len(pending_tasks) + len(processing_tasks)
-
-            if processing_tasks:
-                st.info(f"🧠 正在处理 {len(processing_tasks)} 个记忆任务...")
-                # 显示处理进度
-                for i, task in enumerate(processing_tasks[:3]):  # 最多显示3个
-                    elapsed = (datetime.now() - task['timestamp']).total_seconds()
-                    st.caption(f"任务 {i+1}: 已处理 {elapsed:.1f}秒")
-
-            if pending_tasks:
-                st.caption(f"📝 队列中还有 {len(pending_tasks)} 个任务等待处理")
+    # 记忆存储已改为同步处理，无需显示异步状态
 
     # 获取最近学习的记忆
     if 'recent_memories' not in st.session_state:
